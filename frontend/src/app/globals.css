@@ -1,0 +1,83 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f3ee;
+  --foreground: #1a1a1a;
+
+  /* --container-max-width: 1280px; */
+
+  --page-padding-mobile: 15px;
+  --page-padding-tablet: 24px;
+  --page-padding-desktop: 32px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: #f5f1e8;
+  color: #1a1a1a;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+body {
+  font-family: var(--font-body), sans-serif;
+}
+
+h1 {
+  color: #f5f1e8;
+  font-family: var(--font-heading), sans-serif;
+}
+
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: #50250a;
+  font-family: var(--font-heading), sans-serif;
+}
+/* Main reusable website container */
+.container {
+  width: 100%;
+  max-width: var(--container-max-width);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--page-padding-mobile);
+  padding-right: var(--page-padding-mobile);
+}
+
+/* Tablet */
+@media (min-width: 768px) {
+  .container {
+    padding-left: var(--page-padding-tablet);
+    padding-right: var(--page-padding-tablet);
+  }
+}
+
+/* Desktop */
+@media (min-width: 1024px) {
+  .container {
+    padding-left: var(--page-padding-desktop);
+    padding-right: var(--page-padding-desktop);
+  }
+}
+
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}

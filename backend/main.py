@@ -1,0 +1,1817 @@
+from fastapi import FastAPI, HTTPException, Depends
+from typing import Optional, Literal
+from database import supabase
+from pydantic import BaseModel, Field
+from auth import get_current_user, get_current_user_optional
+import re
+
+
+# ---------- App 初始化（一定要在所有 @app.xxx 之前） ----------
+app = FastAPI(title="STUDIO MONTRO API", version="0.1.0")
+
+# ---------- Pydantic Models ----------
+class ProductCreate(BaseModel):
+    name: str
+    slug: str
+    description: Optional[str] = None
+    price: float = Field(ge=0)
+    stock_quantity: int = Field(ge=0)
+    material: Optional[str] = None
+    dimensions: Optional[str] = None
+    status: Literal["active", "inactive"] = "active"
+    category_id: Optional[str] = None
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    price: Optional[float] = Field(default=None, ge=0)
+    stock_quantity: Optional[int] = Field(default=None, ge=0)
+    material: Optional[str] = None
+    dimensions: Optional[str] = None
+    status: Optional[Literal["active", "inactive"]] = None
+    category_id: Optional[str] = None
+
+class OrderCreate(BaseModel):
+    address_id: str
+    note: Optional[str] = None
+    payment_proof_url: Optional[str] = None
+    
+class AddressCreate(BaseModel):
+    label: Optional[str] = None
+    recipient_name: str
+    phone: str
+    address_line1: str
+    address_line2: Optional[str] = None
+    city: str
+    state: Optional[str] = None
+    postcode: str
+    country: str = "Malaysia"
+    is_default: bool = False
+    
+class ProductImageCreate(BaseModel):
+    image_url: str
+    sort_order: int = 0
+
+class ProductImageUpdate(BaseModel):
+    image_url: Optional[str] = None
+    sort_order: Optional[int] = None
+
+class PaymentVerify(BaseModel):
+    payment_status: Literal["verified"]
+    
+class PaymentProofUpdate(BaseModel):
+    payment_proof_url: str
+    
+    
+class OrderStatusUpdate(BaseModel):
+    status: Literal[
+        "pending_payment",
+        "processing",
+        "ready_to_ship",
+        "shipped",
+        "delivered",
+        "cancelled"
+    ]
+    
+HEX_COLOR_PATTERN = re.compile(r'^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$')
+
+class ProductColorCreate(BaseModel):
+    color_name: str
+    color_hex: str
+
+class ProductColorUpdate(BaseModel):
+    color_name: Optional[str] = None
+    color_hex: Optional[str] = None
+    
+class AddressUpdate(BaseModel):
+    label: Optional[str] = None
+    recipient_name: Optional[str] = None
+    phone: Optional[str] = None
+    address_line1: Optional[str] = None
+    address_line2: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postcode: Optional[str] = None
+    country: Optional[str] = None
+    is_default: Optional[bool] = None
+    
+VALID_STATUSES = ["pending_payment", "processing", "ready_to_ship", "shipped", "delivered", "cancelled"]
+    
+# ---------- Root ----------
+@app.get("/")
+def root():
+    return {"message": "STUDIO MONTRO API is running"}
+
+# ---------- Auth Test ----------
+@app.get("/me")
+def read_current_user(current_user = Depends(get_current_user)):
+    return {
+        "id": current_user.id,
+        "email": current_user.email
+    }
+
+# ---------- Products ----------
+VALID_SORTS = {
+    "newest": ("created_at", True),
+    "price_asc": ("price", False),
+    "price_desc": ("price", True),
+    "name_asc": ("name", False),
+}
+
+@app.get("/products")
+def get_products(
+    category: Optional[str] = None,
+    search: Optional[str] = None,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
+    sort: Optional[str] = None
+):
+    if sort is not None and sort not in VALID_SORTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sort value. Must be one of {list(VALID_SORTS.keys())}"
+        )
+
+    query = supabase.table("products").select("*").eq("status", "active")
+
+    if category:
+        cat = supabase.table("categories").select("id").eq("slug", category).single().execute()
+        if not cat.data:
+            return []
+        query = query.eq("category_id", cat.data["id"])
+
+    if search:
+        query = query.ilike("name", f"%{search}%")
+
+    if min_price is not None:
+        query = query.gte("price", min_price)
+
+    if max_price is not None:
+        query = query.lte("price", max_price)
+
+    sort_key = sort or "newest"
+    sort_field, sort_desc = VALID_SORTS[sort_key]
+    query = query.order(sort_field, desc=sort_desc)
+
+    return query.execute().data
+
+@app.get("/products/saved")
+def get_saved_products(
+    current_user=Depends(get_current_user)
+):
+    response = (
+        supabase
+        .table("saved_products")
+        .select(
+            """
+            id,
+            created_at,
+            product_id,
+            products(
+                id,
+                name,
+                slug,
+                description,
+                price,
+                stock_quantity,
+                material,
+                dimensions,
+                status
+            )
+            """
+        )
+        .eq("user_id", current_user.id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    saved_products = []
+
+    for item in response.data:
+        product = item.get("products")
+
+        # 如果 product 已经不存在 / inactive，不返回给 customer
+        if not product or product.get("status") != "active":
+            continue
+
+        saved_products.append({
+            "saved_id": item["id"],
+            "saved_at": item["created_at"],
+            "product": product
+        })
+
+    return saved_products
+
+@app.get("/products/{product_id}")
+def get_product(product_id: str, current_user = Depends(get_current_user_optional)):
+    response = (
+        supabase
+        .table("products")
+        .select("id, name, slug, description, price, stock_quantity, material, dimensions, status, category_id")
+        .eq("id", product_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    product = response.data[0]
+
+    # 权限检查：inactive 商品只有 admin 能看，其他人一律当作不存在
+    if product["status"] != "active":
+        is_admin = False
+        if current_user:
+            profile = (
+                supabase
+                .table("customer_profiles")
+                .select("is_admin")
+                .eq("user_id", current_user.id)
+                .single()
+                .execute()
+            )
+            is_admin = bool(profile.data and profile.data.get("is_admin"))
+
+        if not is_admin:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+    # category（可能没有）
+    category = None
+    if product.get("category_id"):
+        cat_response = (
+            supabase
+            .table("categories")
+            .select("id, name, slug")
+            .eq("id", product["category_id"])
+            .execute()
+        )
+        if cat_response.data:
+            category = cat_response.data[0]
+
+    # images，按 sort_order 排序
+    images_response = (
+        supabase
+        .table("product_images")
+        .select("id, product_id, image_url, sort_order, created_at")
+        .eq("product_id", product_id)
+        .order("sort_order", desc=False)
+        .execute()
+    )
+
+    # colors（不含 stock_quantity，Task 1 已经把这个字段从 product_colors 移除了）
+    colors_response = (
+        supabase
+        .table("product_colors")
+        .select("id, product_id, color_name, color_hex, created_at")
+        .eq("product_id", product_id)
+        .execute()
+    )
+
+    return {
+        "id": product["id"],
+        "name": product["name"],
+        "slug": product["slug"],
+        "description": product["description"],
+        "price": product["price"],
+        "stock_quantity": product["stock_quantity"],
+        "material": product["material"],
+        "dimensions": product["dimensions"],
+        "status": product["status"],
+        "category": category,
+        "images": images_response.data,
+        "colors": colors_response.data,
+    }
+
+@app.post("/products/{product_id}/save")
+def save_product(
+    product_id: str,
+    current_user=Depends(get_current_user)
+):
+    # 1. 确认 product 存在，而且是 active
+    product_check = (
+        supabase
+        .table("products")
+        .select("id, name, status")
+        .eq("id", product_id)
+        .execute()
+    )
+
+    if not product_check.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    product = product_check.data[0]
+
+    if product["status"] != "active":
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    # 2. 检查是否已经 save
+    existing = (
+        supabase
+        .table("saved_products")
+        .select("id")
+        .eq("user_id", current_user.id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+
+    if existing.data:
+        raise HTTPException(
+            status_code=400,
+            detail="Product already saved"
+        )
+
+    # 3. Save
+    response = (
+        supabase
+        .table("saved_products")
+        .insert({
+            "user_id": current_user.id,
+            "product_id": product_id
+        })
+        .execute()
+    )
+
+    return {
+        "message": "Product saved",
+        "saved_product": response.data[0]
+    }
+
+@app.delete("/products/{product_id}/save")
+def unsave_product(
+    product_id: str,
+    current_user=Depends(get_current_user)
+):
+    # 1. 找到这个用户的 saved product
+    existing = (
+        supabase
+        .table("saved_products")
+        .select("id")
+        .eq("user_id", current_user.id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Product is not saved"
+        )
+
+    # 2. 删除
+    (
+        supabase
+        .table("saved_products")
+        .delete()
+        .eq("user_id", current_user.id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+
+    return {
+        "message": "Product unsaved"
+    }
+
+
+
+# ---------- Product Images ----------
+
+@app.post("/products/{product_id}/images")
+def create_product_image(
+    product_id: str,
+    image: ProductImageCreate,
+    current_user = Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    product_check = supabase.table("products").select("id").eq("id", product_id).execute()
+    if not product_check.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if not image.image_url.strip():
+        raise HTTPException(status_code=400, detail="image_url cannot be empty")
+
+    response = (
+        supabase
+        .table("product_images")
+        .insert({
+            "product_id": product_id,
+            "image_url": image.image_url,
+            "sort_order": image.sort_order
+        })
+        .execute()
+    )
+    return response.data[0]
+
+
+@app.get("/products/{product_id}/images")
+def get_product_images(
+    product_id: str,
+    current_user = Depends(get_current_user_optional)
+):
+    product_check = (
+        supabase
+        .table("products")
+        .select("id, status")
+        .eq("id", product_id)
+        .execute()
+    )
+    if not product_check.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    product = product_check.data[0]
+
+    if product["status"] != "active":
+        is_admin = False
+        if current_user:
+            profile = (
+                supabase
+                .table("customer_profiles")
+                .select("is_admin")
+                .eq("user_id", current_user.id)
+                .single()
+                .execute()
+            )
+            is_admin = bool(profile.data and profile.data.get("is_admin"))
+
+        if not is_admin:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+    response = (
+        supabase
+        .table("product_images")
+        .select("id, product_id, image_url, sort_order, created_at")
+        .eq("product_id", product_id)
+        .order("sort_order", desc=False)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    return response.data
+
+
+@app.patch("/products/{product_id}/images/{image_id}")
+def update_product_image(
+    product_id: str,
+    image_id: str,
+    image: ProductImageUpdate,
+    current_user = Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("product_images")
+        .select("*")
+        .eq("id", image_id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Image not found for this product")
+
+    update_data = {k: v for k, v in image.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if "image_url" in update_data and not update_data["image_url"].strip():
+        raise HTTPException(status_code=400, detail="image_url cannot be empty")
+
+    response = (
+        supabase
+        .table("product_images")
+        .update(update_data)
+        .eq("id", image_id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+    return response.data[0]
+
+
+@app.delete("/products/{product_id}/images/{image_id}")
+def delete_product_image(
+    product_id: str,
+    image_id: str,
+    current_user = Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("product_images")
+        .select("id")
+        .eq("id", image_id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Image not found for this product")
+
+    supabase.table("product_images").delete().eq("id", image_id).eq("product_id", product_id).execute()
+    return {"message": "Image deleted"}
+
+# ---------- Product Colors ----------
+
+@app.post("/products/{product_id}/colors")
+def create_product_color(
+    product_id: str,
+    color: ProductColorCreate,
+    current_user = Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    # 确认商品存在
+    product_check = supabase.table("products").select("id").eq("id", product_id).execute()
+    if not product_check.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    if not color.color_name.strip():
+        raise HTTPException(status_code=400, detail="color_name cannot be empty")
+
+    if not HEX_COLOR_PATTERN.match(color.color_hex):
+        raise HTTPException(status_code=400, detail="color_hex must be a valid hex color, e.g. #1A1A1A")
+
+    # 应用层先检查重复（给用户更友好的错误信息）
+    existing = (
+        supabase
+        .table("product_colors")
+        .select("id")
+        .eq("product_id", product_id)
+        .ilike("color_name", color.color_name.strip())
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(status_code=400, detail=f"Color '{color.color_name}' already exists for this product")
+
+    try:
+        response = (
+            supabase
+            .table("product_colors")
+            .insert({
+                "product_id": product_id,
+                "color_name": color.color_name.strip(),
+                "color_hex": color.color_hex
+            })
+            .execute()
+        )
+    except Exception:
+        # 双保险：万一竞态条件绕过了上面的检查，数据库约束会挡下来
+        raise HTTPException(status_code=400, detail=f"Color '{color.color_name}' already exists for this product")
+
+    return response.data[0]
+
+
+@app.get("/products/{product_id}/colors")
+def get_product_colors(
+    product_id: str,
+    current_user = Depends(get_current_user_optional)
+):
+    product_check = (
+        supabase
+        .table("products")
+        .select("id, status")
+        .eq("id", product_id)
+        .execute()
+    )
+    if not product_check.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    product = product_check.data[0]
+
+    if product["status"] != "active":
+        is_admin = False
+        if current_user:
+            profile = (
+                supabase
+                .table("customer_profiles")
+                .select("is_admin")
+                .eq("user_id", current_user.id)
+                .single()
+                .execute()
+            )
+            is_admin = bool(profile.data and profile.data.get("is_admin"))
+
+        if not is_admin:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+    response = (
+        supabase
+        .table("product_colors")
+        .select("id, product_id, color_name, color_hex, created_at")
+        .eq("product_id", product_id)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    return response.data
+
+
+@app.patch("/products/{product_id}/colors/{color_id}")
+def update_product_color(
+    product_id: str,
+    color_id: str,
+    color: ProductColorUpdate,
+    current_user = Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    # 关键检查：这个颜色必须真的属于这个 product_id
+    existing = (
+        supabase
+        .table("product_colors")
+        .select("*")
+        .eq("id", color_id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Color not found for this product")
+
+    update_data = {k: v for k, v in color.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if "color_name" in update_data:
+        if not update_data["color_name"].strip():
+            raise HTTPException(status_code=400, detail="color_name cannot be empty")
+        update_data["color_name"] = update_data["color_name"].strip()
+
+        # 检查重名（排除自己这一条）
+        dup_check = (
+            supabase
+            .table("product_colors")
+            .select("id")
+            .eq("product_id", product_id)
+            .ilike("color_name", update_data["color_name"])
+            .neq("id", color_id)
+            .execute()
+        )
+        if dup_check.data:
+            raise HTTPException(status_code=400, detail=f"Color '{update_data['color_name']}' already exists for this product")
+
+    if "color_hex" in update_data:
+        if not HEX_COLOR_PATTERN.match(update_data["color_hex"]):
+            raise HTTPException(status_code=400, detail="color_hex must be a valid hex color, e.g. #1A1A1A")
+
+    try:
+        response = (
+            supabase
+            .table("product_colors")
+            .update(update_data)
+            .eq("id", color_id)
+            .eq("product_id", product_id)
+            .execute()
+        )
+    except Exception:
+        raise HTTPException(status_code=400, detail="Color name already exists for this product")
+
+    return response.data[0]
+
+
+@app.delete("/products/{product_id}/colors/{color_id}")
+def delete_product_color(
+    product_id: str,
+    color_id: str,
+    current_user = Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("product_colors")
+        .select("id")
+        .eq("id", color_id)
+        .eq("product_id", product_id)
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Color not found for this product")
+
+    supabase.table("product_colors").delete().eq("id", color_id).eq("product_id", product_id).execute()
+    return {"message": "Color deleted"}
+
+@app.post("/products")
+def create_product(
+    product: ProductCreate,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("products")
+        .select("id")
+        .eq("slug", product.slug)
+        .execute()
+    )
+
+    if existing.data:
+        raise HTTPException(
+            status_code=400,
+            detail="Product slug already exists"
+        )
+
+    response = (
+        supabase
+        .table("products")
+        .insert(product.model_dump())
+        .execute()
+    )
+
+    return response.data[0]
+
+@app.patch("/products/{product_id}")
+def update_product(
+    product_id: str,
+    product: ProductUpdate,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("products")
+        .select("id")
+        .eq("id", product_id)
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    update_data = {
+        k: v
+        for k, v in product.model_dump().items()
+        if v is not None
+    }
+
+    if not update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="No fields to update"
+        )
+
+    response = (
+        supabase
+        .table("products")
+        .update(update_data)
+        .eq("id", product_id)
+        .execute()
+    )
+
+    return response.data[0]
+
+@app.delete("/products/{product_id}")
+def delete_product(
+    product_id: str,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("products")
+        .select("id")
+        .eq("id", product_id)
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found"
+        )
+
+    response = (
+        supabase
+        .table("products")
+        .update({"status": "inactive"})
+        .eq("id", product_id)
+        .execute()
+    )
+
+    return {
+        "message": "Product deactivated",
+        "product": response.data[0]
+    }
+
+# ---------- Categories ----------
+@app.get("/categories")
+def get_categories():
+    response = supabase.table("categories").select("*").execute()
+    return response.data
+
+@app.get("/categories/{category_id}")
+def get_category(category_id: str):
+    response = supabase.table("categories").select("*").eq("id", category_id).single().execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return response.data
+
+# ---------- Cart Models ----------
+class CartItemCreate(BaseModel):
+    product_id: str
+    quantity: int = Field(default=1, ge=1)
+    selected_color_id: Optional[str] = None
+
+class CartItemUpdate(BaseModel):
+    quantity: int = Field(ge=1)
+
+# ---------- Cart Helper: 拿到（或自动建立）这个用户的购物车 ----------
+def require_admin(current_user):
+    profile = (
+        supabase
+        .table("customer_profiles")
+        .select("is_admin")
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+
+    if not profile.data:
+        raise HTTPException(status_code=403, detail="Admin profile not found")
+
+    if not profile.data[0]["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+def get_or_create_cart(user_id: str):
+    existing = supabase.table("carts").select("*").eq("user_id", user_id).execute()
+    if existing.data:
+        return existing.data[0]
+    
+    new_cart = supabase.table("carts").insert({"user_id": user_id}).execute()
+    return new_cart.data[0]
+
+def get_or_create_customer_profile(user_id: str):
+    existing = supabase.table("customer_profiles").select("*").eq("user_id", user_id).execute()
+    if existing.data:
+        return existing.data[0]
+    
+    new_profile = supabase.table("customer_profiles").insert({"user_id": user_id}).execute()
+    return new_profile.data[0]
+# ---------- GET /cart ----------
+@app.get("/cart")
+def get_cart(current_user = Depends(get_current_user)):
+    cart = get_or_create_cart(current_user.id)
+    
+    items = (
+        supabase
+        .table("cart_items")
+        .select("*, products(name, price, slug), product_colors(color_name, color_hex)")
+        .eq("cart_id", cart["id"])
+        .execute()
+    )
+    cart_items = []
+
+    for item in items.data:
+        product = item.get("products") or {}
+
+        quantity = item["quantity"]
+        price = product.get("price", 0)
+
+        cart_items.append({
+            **item,
+            "subtotal": price * quantity
+        })
+
+    total = sum(item["subtotal"] for item in cart_items)
+
+    return {
+        "cart_id": cart["id"],
+        "items": cart_items,
+        "total": total
+    }
+
+# ---------- POST /cart/items ----------
+@app.post("/cart/items")
+def add_cart_item(item: CartItemCreate, current_user = Depends(get_current_user)):
+    cart = get_or_create_cart(current_user.id)
+
+    # 检查商品是否存在，并拿到库存
+    product_check = (
+        supabase
+        .table("products")
+        .select("id, stock_quantity, status")
+        .eq("id", item.product_id)
+        .execute()
+    )
+    if not product_check.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    product = product_check.data[0]
+    if product["stock_quantity"] <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Product is out of stock"
+        )
+    if product["status"] != "active":
+        raise HTTPException(status_code=400, detail="Product is not available")
+    
+
+    # 颜色验证（保留原本逻辑）
+    if item.selected_color_id:
+        color_check = (
+            supabase
+            .table("product_colors")
+            .select("id")
+            .eq("id", item.selected_color_id)
+            .eq("product_id", item.product_id)
+            .execute()
+        )
+        if not color_check.data:
+            raise HTTPException(status_code=400, detail="Invalid color for this product")
+
+    # 检查是否已在购物车里
+    query = (
+        supabase
+        .table("cart_items")
+        .select("*")
+        .eq("cart_id", cart["id"])
+        .eq("product_id", item.product_id)
+    )
+    if item.selected_color_id:
+        query = query.eq("selected_color_id", item.selected_color_id)
+    else:
+        query = query.is_("selected_color_id", "null")
+
+    existing = query.execute()
+
+    if existing.data:
+        new_qty = existing.data[0]["quantity"] + item.quantity
+        if new_qty > product["stock_quantity"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {product['stock_quantity']} in stock, cart already has {existing.data[0]['quantity']}"
+            )
+        response = (
+            supabase
+            .table("cart_items")
+            .update({"quantity": new_qty})
+            .eq("id", existing.data[0]["id"])
+            .execute()
+        )
+        return response.data
+    else:
+        if item.quantity > product["stock_quantity"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only {product['stock_quantity']} in stock"
+            )
+        response = (
+            supabase
+            .table("cart_items")
+            .insert({
+                "cart_id": cart["id"],
+                "product_id": item.product_id,
+                "quantity": item.quantity,
+                "selected_color_id": item.selected_color_id
+            })
+            .execute()
+        )
+        return response.data
+
+# ---------- PATCH /cart/items/{id} ----------
+@app.patch("/cart/items/{item_id}")
+def update_cart_item(item_id: str, item: CartItemUpdate, current_user = Depends(get_current_user)):
+    cart = get_or_create_cart(current_user.id)
+
+    existing = (
+        supabase
+        .table("cart_items")
+        .select("*")
+        .eq("id", item_id)
+        .eq("cart_id", cart["id"])
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+
+    product_check = (
+        supabase
+        .table("products")
+        .select("stock_quantity, status")
+        .eq("id", existing.data[0]["product_id"])
+        .execute()
+    )
+    if not product_check.data:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    product = product_check.data[0]
+
+    if product["status"] != "active":
+        raise HTTPException(status_code=400, detail="Product is no longer available")
+
+    stock = product["stock_quantity"]
+    if item.quantity > stock:
+        raise HTTPException(status_code=400, detail=f"Only {stock} in stock")
+
+    response = (
+        supabase
+        .table("cart_items")
+        .update({"quantity": item.quantity})
+        .eq("id", item_id)
+        .execute()
+    )
+    return response.data
+
+# ---------- DELETE /cart/items/{id} ----------
+@app.delete("/cart/items/{item_id}")
+def delete_cart_item(item_id: str, current_user = Depends(get_current_user)):
+    cart = get_or_create_cart(current_user.id)
+    
+    existing = (
+        supabase
+        .table("cart_items")
+        .select("*")
+        .eq("id", item_id)
+        .eq("cart_id", cart["id"])
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Cart item not found")
+    
+    supabase.table("cart_items").delete().eq("id", item_id).execute()
+    return {"message": "Item removed from cart"}
+
+@app.post("/addresses")
+def create_address(address: AddressCreate, current_user = Depends(get_current_user)):
+    profile = get_or_create_customer_profile(current_user.id)
+
+    data = address.model_dump()
+    data["customer_id"] = profile["id"]
+
+    # 如果这是客人的第一笔地址，自动设成 default
+    existing_addresses = (
+        supabase
+        .table("addresses")
+        .select("id")
+        .eq("customer_id", profile["id"])
+        .execute()
+    )
+    if not existing_addresses.data:
+        data["is_default"] = True
+
+    # 如果这笔要设成 default，先把其他地址的 default 取消
+    if data.get("is_default"):
+        supabase.table("addresses").update({"is_default": False}).eq("customer_id", profile["id"]).execute()
+
+    response = supabase.table("addresses").insert(data).execute()
+    return response.data[0]
+
+
+@app.get("/addresses")
+def get_my_addresses(current_user = Depends(get_current_user)):
+    profile = get_or_create_customer_profile(current_user.id)
+
+    response = (
+        supabase
+        .table("addresses")
+        .select("*")
+        .eq("customer_id", profile["id"])
+        .order("created_at", desc=False)
+        .execute()
+    )
+    return response.data
+
+
+@app.patch("/addresses/{address_id}")
+def update_address(address_id: str, address: AddressUpdate, current_user = Depends(get_current_user)):
+    profile = get_or_create_customer_profile(current_user.id)
+
+    # 归属检查：这笔地址必须属于当前登录客人
+    existing = (
+        supabase
+        .table("addresses")
+        .select("*")
+        .eq("id", address_id)
+        .eq("customer_id", profile["id"])
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    update_data = {k: v for k, v in address.model_dump().items() if v is not None}
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # 如果这次要把这笔设成 default，先把这个客人其他地址的 default 取消
+    if update_data.get("is_default") is True:
+        supabase.table("addresses").update({"is_default": False}).eq("customer_id", profile["id"]).execute()
+
+    response = (
+        supabase
+        .table("addresses")
+        .update(update_data)
+        .eq("id", address_id)
+        .eq("customer_id", profile["id"])
+        .execute()
+    )
+    return response.data[0]
+
+
+@app.delete("/addresses/{address_id}")
+def delete_address(address_id: str, current_user = Depends(get_current_user)):
+    profile = get_or_create_customer_profile(current_user.id)
+
+    existing = (
+        supabase
+        .table("addresses")
+        .select("*")
+        .eq("id", address_id)
+        .eq("customer_id", profile["id"])
+        .execute()
+    )
+    if not existing.data:
+        raise HTTPException(status_code=404, detail="Address not found")
+
+    was_default = existing.data[0]["is_default"]
+
+    try:
+        supabase.table("addresses").delete().eq("id", address_id).eq("customer_id", profile["id"]).execute()
+    except Exception as e:
+        error_str = str(e)
+        if "23503" in error_str or "foreign key" in error_str.lower():
+            raise HTTPException(
+                status_code=409,
+                detail="This address is linked to an existing order and cannot be deleted"
+            )
+        raise HTTPException(status_code=500, detail="Failed to delete address")
+
+    if was_default:
+        remaining = (
+            supabase
+            .table("addresses")
+            .select("id")
+            .eq("customer_id", profile["id"])
+            .order("created_at", desc=False)
+            .limit(1)
+            .execute()
+        )
+        if remaining.data:
+            supabase.table("addresses").update({"is_default": True}).eq("id", remaining.data[0]["id"]).execute()
+
+    return {"message": "Address deleted"}
+
+@app.get("/orders")
+def get_my_orders(current_user = Depends(get_current_user)):
+    response = (
+        supabase
+        .table("orders")
+        .select("*, order_items(*), addresses(*)")
+        .eq("user_id", current_user.id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return response.data
+
+@app.post("/orders")
+def create_order(order: OrderCreate, current_user = Depends(get_current_user)):
+    try:
+        response = supabase.rpc("checkout_order", {
+            "p_user_id": current_user.id,
+            "p_address_id": order.address_id,
+            "p_note": order.note,
+            "p_payment_proof_url": order.payment_proof_url
+        }).execute()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    order_id = response.data
+    
+    full_order = (
+        supabase
+        .table("orders")
+        .select("*, order_items(*), addresses(*)")
+        .eq("id", order_id)
+        .single()
+        .execute()
+    )
+    return full_order.data
+
+@app.patch("/orders/{order_id}/payment-proof")
+def upload_payment_proof(
+    order_id: str,
+    payload: PaymentProofUpdate,
+    current_user = Depends(get_current_user)
+):
+    # 1. 找订单
+    existing = (
+        supabase
+        .table("orders")
+        .select("*")
+        .eq("id", order_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    order = existing.data[0]
+
+    # 2. 只有 pending payment 才能提交 proof
+    if order["payment_status"] != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment proof cannot be submitted for this order"
+        )
+
+    # 3. 检查 proof URL 不可以是空的
+    if not payload.payment_proof_url.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Payment proof URL cannot be empty"
+        )
+
+    # 4. 更新 payment proof
+    response = (
+        supabase
+        .table("orders")
+        .update({
+            "payment_proof_url": payload.payment_proof_url
+        })
+        .eq("id", order_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    return response.data[0]
+
+@app.get("/orders/{order_id}")
+def get_my_order(
+    order_id: str,
+    current_user=Depends(get_current_user)
+):
+    response = (
+        supabase
+        .table("orders")
+        .select(
+            "*, order_items(*), addresses(*), order_status_history(*)"
+        )
+        .eq("id", order_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    order = response.data[0]
+
+    # Security check
+    if order["user_id"] != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to view this order"
+        )
+
+    return order
+
+@app.patch("/admin/orders/{order_id}/payment")
+def verify_payment(
+    order_id: str,
+    payload: PaymentVerify,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    # 1. Only allow verifying payment
+    if payload.payment_status != "verified":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment can only be verified"
+        )
+
+    # 2. Find order
+    order_response = (
+        supabase
+        .table("orders")
+        .select("*")
+        .eq("id", order_id)
+        .single()
+        .execute()
+    )
+
+    if not order_response.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    order = order_response.data
+
+    # 3. Prevent verifying an already verified payment
+    if order["payment_status"] == "verified":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment is already verified"
+        )
+
+    # 4. Payment proof is required
+    if not order.get("payment_proof_url"):
+        raise HTTPException(
+            status_code=400,
+            detail="Payment proof is required before verification"
+        )
+
+    # 5. Payment must currently be pending
+    if order["payment_status"] != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Payment cannot be verified from "
+                f"{order['payment_status']} status"
+            )
+        )
+
+    # 6. Verify payment
+    payment_response = (
+        supabase
+        .table("orders")
+        .update({
+            "payment_status": "verified"
+        })
+        .eq("id", order_id)
+        .execute()
+    )
+
+    if not payment_response.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to verify payment"
+        )
+
+    # 7. Move order to processing
+    status_response = (
+        supabase
+        .table("orders")
+        .update({
+            "status": "processing"
+        })
+        .eq("id", order_id)
+        .execute()
+    )
+
+    if not status_response.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Payment verified but failed to update order status"
+        )
+
+    # 8. Record order status history
+    supabase.table("order_status_history").insert({
+        "order_id": order_id,
+        "status": "processing",
+        "changed_by": current_user.id
+    }).execute()
+
+    return status_response.data[0]
+
+@app.patch("/admin/orders/{order_id}/status")
+def update_order_status(
+    order_id: str,
+    payload: OrderStatusUpdate,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    # 1. Validate target status
+    if payload.status not in VALID_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status. Must be one of {VALID_STATUSES}"
+        )
+
+    # 2. Get current order
+    existing = (
+        supabase
+        .table("orders")
+        .select("*")
+        .eq("id", order_id)
+        .single()
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    order = existing.data
+    current_status = order["status"]
+    new_status = payload.status
+    payment_status = order["payment_status"]
+
+    # 3. If status is unchanged, do nothing
+    if current_status == new_status:
+        return order
+
+    # 4. Define allowed status transitions
+    allowed_transitions = {
+        "pending_payment": ["processing", "cancelled"],
+        "processing": ["ready_to_ship", "cancelled"],
+        "ready_to_ship": ["shipped"],
+        "shipped": ["delivered"],
+        "delivered": [],
+        "cancelled": []
+    }
+
+    allowed_next_statuses = allowed_transitions.get(current_status, [])
+
+    if new_status not in allowed_next_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid status transition: "
+                f"{current_status} -> {new_status}"
+            )
+        )
+
+    # 5. Payment must be verified before processing
+    if new_status == "processing" and payment_status != "verified":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment must be verified before order can enter processing"
+        )
+
+    # 6. Update order status
+    response = (
+        supabase
+        .table("orders")
+        .update({"status": new_status})
+        .eq("id", order_id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    # 7. Write status history
+    supabase.table("order_status_history").insert({
+        "order_id": order_id,
+        "status": new_status,
+        "changed_by": current_user.id
+    }).execute()
+
+    return response.data[0]
+
+@app.get("/orders/{order_id}/history")
+def get_order_history(order_id: str, current_user = Depends(get_current_user)):
+    order = supabase.table("orders").select("user_id").eq("id", order_id).single().execute()
+    if not order.data:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    if order.data["user_id"] != current_user.id:
+        require_admin(current_user)
+
+    response = (
+        supabase
+        .table("order_status_history")
+        .select("*")
+        .eq("order_id", order_id)
+        .order("changed_at")
+        .execute()
+    )
+    return response.data
+
+
+@app.get("/admin/analytics/summary")
+def get_analytics_summary(current_user = Depends(get_current_user)):
+    require_admin(current_user)
+
+    # 1. 总营收（只算已确认付款且未取消的订单）
+    verified_orders = (
+        supabase
+        .table("orders")
+        .select("total")
+        .eq("payment_status", "verified")
+        .neq("status", "cancelled")
+        .execute()
+    )
+    total_revenue = sum(o["total"] for o in verified_orders.data)
+
+    # 2. 总订单数
+    all_orders = supabase.table("orders").select("id, status").execute()
+    total_orders = len(all_orders.data)
+
+    # 3. 依状态分类的订单数量
+    status_counts = {}
+    for o in all_orders.data:
+        status_counts[o["status"]] = status_counts.get(o["status"], 0) + 1
+
+    # 4. 库存偏低提醒
+    low_stock = (
+        supabase
+        .table("products")
+        .select("id, name, stock_quantity")
+        .lte("stock_quantity", 5)
+        .execute()
+    )
+
+    return {
+        "total_revenue": total_revenue,
+        "total_orders": total_orders,
+        "orders_by_status": status_counts,
+        "low_stock_products": low_stock.data
+    }
+
+
+@app.get("/admin/analytics/top-products")
+def get_top_products(current_user = Depends(get_current_user), limit: int = 5):
+    require_admin(current_user)
+
+    # 只有 payment_status = verified 且 status != cancelled 的订单才算销售
+    valid_orders = (
+        supabase
+        .table("orders")
+        .select("id")
+        .eq("payment_status", "verified")
+        .neq("status", "cancelled")
+        .execute()
+    )
+    valid_order_ids = [o["id"] for o in valid_orders.data]
+
+    if not valid_order_ids:
+        return []
+
+    items = (
+        supabase
+        .table("order_items")
+        .select("product_id, product_name, quantity")
+        .in_("order_id", valid_order_ids)
+        .execute()
+    )
+
+    sales = {}
+    for item in items.data:
+        key = item["product_id"]
+        if key not in sales:
+            sales[key] = {"product_id": key, "product_name": item["product_name"], "total_sold": 0}
+        sales[key]["total_sold"] += item["quantity"]
+
+    sorted_sales = sorted(sales.values(), key=lambda x: x["total_sold"], reverse=True)
+    return sorted_sales[:limit]
+
+# ---------- Analytics: Monthly Sales ----------
+
+@app.get("/admin/analytics/monthly-sales")
+def get_monthly_sales(current_user = Depends(get_current_user)):
+    require_admin(current_user)
+
+    verified_orders = (
+        supabase
+        .table("orders")
+        .select("total, created_at")
+        .eq("payment_status", "verified")
+        .neq("status", "cancelled")
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    monthly_sales = {}
+
+    for order in verified_orders.data:
+        month = order["created_at"][:7]
+
+        if month not in monthly_sales:
+            monthly_sales[month] = {
+                "month": month,
+                "revenue": 0,
+                "orders": 0
+            }
+
+        monthly_sales[month]["revenue"] += order["total"]
+        monthly_sales[month]["orders"] += 1
+
+    result = sorted(monthly_sales.values(), key=lambda x: x["month"])
+    return result
+
+# ---------- Analytics: Growth ----------
+@app.get("/admin/analytics/growth")
+def get_analytics_growth(current_user = Depends(get_current_user)):
+    require_admin(current_user)
+
+    from datetime import datetime
+
+    # 1. 用真实的当前日期决定 current_month 和 previous_month
+    #    不依赖数据里有没有订单
+    now = datetime.utcnow()
+    current_month = now.strftime("%Y-%m")
+
+    if now.month == 1:
+        previous_date = now.replace(year=now.year - 1, month=12)
+    else:
+        previous_date = now.replace(month=now.month - 1)
+    previous_month = previous_date.strftime("%Y-%m")
+
+    # 2. 只统计已验证且未取消的订单
+    verified_orders = (
+        supabase
+        .table("orders")
+        .select("total, created_at")
+        .eq("payment_status", "verified")
+        .neq("status", "cancelled")
+        .execute()
+    )
+
+    # 3. 按月份聚合
+    monthly_data = {}
+    for order in verified_orders.data:
+        month = order["created_at"][:7]
+        if month not in monthly_data:
+            monthly_data[month] = {"month": month, "revenue": 0, "orders": 0}
+        monthly_data[month]["revenue"] += order["total"]
+        monthly_data[month]["orders"] += 1
+
+    # 4. 分别取出 current 和 previous，数据里没有就补零（而不是跳过）
+    current_data = monthly_data.get(
+        current_month,
+        {"month": current_month, "revenue": 0, "orders": 0}
+    )
+    previous_data = monthly_data.get(
+        previous_month,
+        {"month": previous_month, "revenue": 0, "orders": 0}
+    )
+
+    # 5. 计算增长率，避免除以零
+    if previous_data["revenue"] == 0:
+        revenue_growth = None
+    else:
+        revenue_growth = (
+            (current_data["revenue"] - previous_data["revenue"])
+            / previous_data["revenue"]
+        ) * 100
+
+    if previous_data["orders"] == 0:
+        order_growth = None
+    else:
+        order_growth = (
+            (current_data["orders"] - previous_data["orders"])
+            / previous_data["orders"]
+        ) * 100
+
+    return {
+        "current_month": current_data,
+        "previous_month": previous_data,
+        "revenue_growth": round(revenue_growth, 2) if revenue_growth is not None else None,
+        "order_growth": round(order_growth, 2) if order_growth is not None else None
+    }
+    
+# ---------- Collections ----------
+
+class CollectionCreate(BaseModel):
+    name: str
+    slug: str
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+    is_featured: bool = False
+
+@app.post("/admin/collections")
+def create_collection(collection: CollectionCreate, current_user = Depends(get_current_user)):
+    require_admin(current_user)
+    response = supabase.table("collections").insert(collection.model_dump()).execute()
+    return response.data[0]
+
+@app.get("/collections")
+def get_collections():
+    response = supabase.table("collections").select("*").execute()
+    return response.data
+
+@app.get("/collections/{collection_id}")
+def get_collection(collection_id: str):
+    response = supabase.table("collections").select("*").eq("id", collection_id).single().execute()
+    if not response.data:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return response.data
+
+@app.get("/collections/{collection_id}/products")
+def get_collection_products(collection_id: str):
+    # 先确认 collection 存在
+    collection = supabase.table("collections").select("*").eq("id", collection_id).single().execute()
+    if not collection.data:
+        raise HTTPException(status_code=404, detail="Collection not found")
+
+    # 透过中间表找出这个 collection 底下所有的 product_id
+    links = (
+        supabase
+        .table("product_collections")
+        .select("product_id")
+        .eq("collection_id", collection_id)
+        .execute()
+    )
+    product_ids = [row["product_id"] for row in links.data]
+
+    if not product_ids:
+        return []
+
+    products = (
+        supabase
+        .table("products")
+        .select("*")
+        .in_("id", product_ids)
+        .execute()
+    )
+    return products.data
+
+
+class ProductCollectionLink(BaseModel):
+    product_id: str
+    collection_id: str
+
+@app.post("/admin/product-collections")
+def add_product_to_collection(link: ProductCollectionLink, current_user = Depends(get_current_user)):
+    require_admin(current_user)
+
+    response = (
+        supabase
+        .table("product_collections")
+        .insert({"product_id": link.product_id, "collection_id": link.collection_id})
+        .execute()
+    )
+    return response.data
+
+
+@app.delete("/admin/product-collections")
+def remove_product_from_collection(link: ProductCollectionLink, current_user = Depends(get_current_user)):
+    require_admin(current_user)
+
+    supabase.table("product_collections").delete()\
+        .eq("product_id", link.product_id)\
+        .eq("collection_id", link.collection_id)\
+        .execute()
+    return {"message": "Removed from collection"}
+
+
+@app.get("/admin/orders")
+def get_all_orders(
+    current_user = Depends(get_current_user),
+    status: Optional[str] = None,
+    payment_status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+):
+    require_admin(current_user)
+
+    query = (
+        supabase
+        .table("orders")
+        .select("*, order_items(*), addresses(*), customer_profiles(full_name, phone)")
+        .order("created_at", desc=True)
+        .range(offset, offset + limit - 1)
+    )
+
+    if status:
+        query = query.eq("status", status)
+    if payment_status:
+        query = query.eq("payment_status", payment_status)
+
+    response = query.execute()
+    return response.data
+
+@app.get("/admin/orders/{order_id}")
+def get_order_detail(
+    order_id: str,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    response = (
+    supabase
+    .table("orders")
+    .select("""
+        *,
+        order_items(*),
+        addresses(*),
+        customer_profiles(full_name, phone),
+        order_status_history(*)
+    """)
+    .eq("id", order_id)
+    .execute()
+)
+
+    if not response.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    return response.data[0]
