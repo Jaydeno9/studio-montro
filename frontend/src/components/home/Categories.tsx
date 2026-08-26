@@ -46,7 +46,7 @@ export default function Categories() {
           </h2>
         </div>
 
-        <div className="hide-scrollbar flex gap-6 overflow-x-auto md:gap-8">
+        <div className="hide-scrollbar flex gap-6 overflow-x-auto md:gap-">
           {categories.map((category) => (
             <Link
               key={category.name}

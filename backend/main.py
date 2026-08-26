@@ -4,10 +4,24 @@ from database import supabase
 from pydantic import BaseModel, Field
 from auth import get_current_user, get_current_user_optional
 import re
+from fastapi.middleware.cors import CORSMiddleware
 
 
 # ---------- App 初始化（一定要在所有 @app.xxx 之前） ----------
 app = FastAPI(title="STUDIO MONTRO API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ---------- Pydantic Models ----------
 class ProductCreate(BaseModel):
@@ -24,6 +38,7 @@ class ProductCreate(BaseModel):
 
 class ProductUpdate(BaseModel):
     name: Optional[str] = None
+    description: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
     stock_quantity: Optional[int] = Field(default=None, ge=0)
     material: Optional[str] = None
@@ -34,7 +49,6 @@ class ProductUpdate(BaseModel):
 class OrderCreate(BaseModel):
     address_id: str
     note: Optional[str] = None
-    payment_proof_url: Optional[str] = None
     
 class AddressCreate(BaseModel):
     label: Optional[str] = None
@@ -63,6 +77,7 @@ class PaymentProofUpdate(BaseModel):
     payment_proof_url: str
     
     
+    
 class OrderStatusUpdate(BaseModel):
     status: Literal[
         "pending_payment",
@@ -70,9 +85,30 @@ class OrderStatusUpdate(BaseModel):
         "ready_to_ship",
         "shipped",
         "delivered",
-        "cancelled"
+        "cancelled",
     ]
+    cancellation_reason: Optional[str] = None
+
+class RefundComplete(BaseModel):
+    reference: str = Field(min_length=1, max_length=200)
+    note: Optional[str] = Field(default=None, max_length=1000)
     
+class CancellationRequestCreate(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class CancellationRequestResolve(BaseModel):
+    action: Literal["approve", "reject"]
+    resolution_message: Optional[str] = Field(
+        default=None,
+        max_length=1000
+    )
+    admin_note: Optional[str] = Field(
+        default=None,
+        max_length=1000
+    )
+
+
 HEX_COLOR_PATTERN = re.compile(r'^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{3})$')
 
 class ProductColorCreate(BaseModel):
@@ -94,8 +130,46 @@ class AddressUpdate(BaseModel):
     postcode: Optional[str] = None
     country: Optional[str] = None
     is_default: Optional[bool] = None
+
+class CustomerProfileUpdate(BaseModel):
+    full_name: Optional[str] = Field(default=None, max_length=120)
+    phone: Optional[str] = Field(default=None, max_length=40)
     
 VALID_STATUSES = ["pending_payment", "processing", "ready_to_ship", "shipped", "delivered", "cancelled"]
+
+class InventoryAdjustmentCreate(BaseModel):
+    mode: Literal["add", "remove", "set"]
+    quantity: int = Field(ge=0)
+    reason: Literal[
+        "restock",
+        "manual_correction",
+        "damaged",
+        "return",
+        "other",
+    ]
+    note: Optional[str] = None
+
+
+def require_admin(current_user):
+    profile = (
+        supabase
+        .table("customer_profiles")
+        .select("is_admin")
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+
+    if not profile.data:
+        raise HTTPException(
+            status_code=403,
+            detail="Admin profile not found"
+        )
+
+    if not profile.data[0].get("is_admin"):
+        raise HTTPException(
+            status_code=403,
+            detail="Admin access required"
+        )
     
 # ---------- Root ----------
 @app.get("/")
@@ -109,6 +183,19 @@ def read_current_user(current_user = Depends(get_current_user)):
         "id": current_user.id,
         "email": current_user.email
     }
+
+# ---------- Categories ----------
+@app.get("/categories")
+def get_categories():
+    response = (
+        supabase
+        .table("categories")
+        .select("id, name, slug")
+        .order("name")
+        .execute()
+    )
+
+    return response.data
 
 # ---------- Products ----------
 VALID_SORTS = {
@@ -132,13 +219,22 @@ def get_products(
             detail=f"Invalid sort value. Must be one of {list(VALID_SORTS.keys())}"
         )
 
-    query = supabase.table("products").select("*").eq("status", "active")
+    # 1. 查询基础商品
+    query = (
+        supabase
+        .table("products")
+        .select(
+            "id, name, slug, description, price, stock_quantity, "
+            "material, dimensions, status, category_id, created_at"
+        )
+        .eq("status", "active")
+    )
 
     if category:
-        cat = supabase.table("categories").select("id").eq("slug", category).single().execute()
-        if not cat.data:
+        category_response = supabase.table("categories").select("id").eq("slug", category).execute()
+        if not category_response.data:
             return []
-        query = query.eq("category_id", cat.data["id"])
+        query = query.eq("category_id", category_response.data[0]["id"])
 
     if search:
         query = query.ilike("name", f"%{search}%")
@@ -153,7 +249,85 @@ def get_products(
     sort_field, sort_desc = VALID_SORTS[sort_key]
     query = query.order(sort_field, desc=sort_desc)
 
-    return query.execute().data
+    products_response = query.execute()
+    products = products_response.data
+
+    if not products:
+        return []
+
+    product_ids = [product["id"] for product in products]
+
+    # 2. 批量查 Categories
+    categories_response = supabase.table("categories").select("id, name, slug").execute()
+    categories_by_id = {cat["id"]: cat for cat in categories_response.data}
+
+    # 3. 批量查 Images
+    images_response = (
+        supabase
+        .table("product_images")
+        .select("id, product_id, image_url, sort_order")
+        .in_("product_id", product_ids)
+        .order("sort_order", desc=False)
+        .execute()
+    )
+
+    images_by_product = {}
+    for image in images_response.data:
+        p_id = image["product_id"]
+        if p_id not in images_by_product:
+            images_by_product[p_id] = []
+        images_by_product[p_id].append(image)
+
+    # 4. 批量查 Colors
+    colors_response = (
+        supabase
+        .table("product_colors")
+        .select("id, product_id, color_name, color_hex")
+        .in_("product_id", product_ids)
+        .execute()
+    )
+
+    colors_by_product = {}
+    for color in colors_response.data:
+        p_id = color["product_id"]
+        if p_id not in colors_by_product:
+            colors_by_product[p_id] = []
+        colors_by_product[p_id].append({
+            "id": color["id"],
+            "color_name": color["color_name"],
+            "color_hex": color["color_hex"],
+        })
+
+    # 5. 组装结果
+    result = []
+    for product in products:
+        p_id = product["id"]
+        product_images = images_by_product.get(p_id, [])
+
+        primary_image = product_images[0]["image_url"] if len(product_images) > 0 else None
+        secondary_image = product_images[1]["image_url"] if len(product_images) > 1 else None
+
+        category_data = categories_by_id.get(product.get("category_id"))
+
+        result.append({
+            "id": product["id"],
+            "name": product["name"],
+            "slug": product["slug"],
+            "description": product["description"],
+            "price": product["price"],
+            "stock_quantity": product["stock_quantity"],
+            "material": product["material"],
+            "dimensions": product["dimensions"],
+            "status": product["status"],
+            "category": category_data,
+            "primary_image": primary_image,
+            "secondary_image": secondary_image,
+            "colors": colors_by_product.get(p_id, []),
+            "created_at": product["created_at"],
+        })
+
+    return result
+
 
 @app.get("/products/saved")
 def get_saved_products(
@@ -801,10 +975,6 @@ def delete_product(
     }
 
 # ---------- Categories ----------
-@app.get("/categories")
-def get_categories():
-    response = supabase.table("categories").select("*").execute()
-    return response.data
 
 @app.get("/categories/{category_id}")
 def get_category(category_id: str):
@@ -823,21 +993,6 @@ class CartItemUpdate(BaseModel):
     quantity: int = Field(ge=1)
 
 # ---------- Cart Helper: 拿到（或自动建立）这个用户的购物车 ----------
-def require_admin(current_user):
-    profile = (
-        supabase
-        .table("customer_profiles")
-        .select("is_admin")
-        .eq("user_id", current_user.id)
-        .execute()
-    )
-
-    if not profile.data:
-        raise HTTPException(status_code=403, detail="Admin profile not found")
-
-    if not profile.data[0]["is_admin"]:
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
 def get_or_create_cart(user_id: str):
     existing = supabase.table("carts").select("*").eq("user_id", user_id).execute()
     if existing.data:
@@ -1037,6 +1192,64 @@ def delete_cart_item(item_id: str, current_user = Depends(get_current_user)):
     supabase.table("cart_items").delete().eq("id", item_id).execute()
     return {"message": "Item removed from cart"}
 
+@app.get("/profile")
+def get_my_profile(current_user = Depends(get_current_user)):
+    profile = get_or_create_customer_profile(current_user.id)
+
+    return {
+        "id": profile["id"],
+        "user_id": profile["user_id"],
+        "full_name": profile.get("full_name"),
+        "phone": profile.get("phone"),
+        "email": getattr(current_user, "email", None),
+        "created_at": profile.get("created_at"),
+        "updated_at": profile.get("updated_at"),
+    }
+
+
+@app.patch("/profile")
+def update_my_profile(
+    payload: CustomerProfileUpdate,
+    current_user = Depends(get_current_user),
+):
+    profile = get_or_create_customer_profile(current_user.id)
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if "full_name" in update_data and update_data["full_name"] is not None:
+        update_data["full_name"] = update_data["full_name"].strip() or None
+
+    if "phone" in update_data and update_data["phone"] is not None:
+        update_data["phone"] = update_data["phone"].strip() or None
+
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No profile fields to update")
+
+    response = (
+        supabase
+        .table("customer_profiles")
+        .update(update_data)
+        .eq("id", profile["id"])
+        .eq("user_id", current_user.id)
+        .execute()
+    )
+
+    if not response.data:
+        raise HTTPException(status_code=500, detail="Unable to update profile")
+
+    updated = response.data[0]
+
+    return {
+        "id": updated["id"],
+        "user_id": updated["user_id"],
+        "full_name": updated.get("full_name"),
+        "phone": updated.get("phone"),
+        "email": getattr(current_user, "email", None),
+        "created_at": updated.get("created_at"),
+        "updated_at": updated.get("updated_at"),
+    }
+
+
 @app.post("/addresses")
 def create_address(address: AddressCreate, current_user = Depends(get_current_user)):
     profile = get_or_create_customer_profile(current_user.id)
@@ -1161,7 +1374,7 @@ def get_my_orders(current_user = Depends(get_current_user)):
     response = (
         supabase
         .table("orders")
-        .select("*, order_items(*), addresses(*)")
+        .select("*, order_items(*), addresses(*), order_cancellation_requests(*)")
         .eq("user_id", current_user.id)
         .order("created_at", desc=True)
         .execute()
@@ -1175,7 +1388,7 @@ def create_order(order: OrderCreate, current_user = Depends(get_current_user)):
             "p_user_id": current_user.id,
             "p_address_id": order.address_id,
             "p_note": order.note,
-            "p_payment_proof_url": order.payment_proof_url
+            "p_payment_proof_url": None
         }).execute()
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1193,50 +1406,87 @@ def create_order(order: OrderCreate, current_user = Depends(get_current_user)):
     return full_order.data
 
 @app.patch("/orders/{order_id}/payment-proof")
-def upload_payment_proof(
+def submit_payment_proof(
     order_id: str,
     payload: PaymentProofUpdate,
-    current_user = Depends(get_current_user)
+    current_user=Depends(get_current_user)
 ):
-    # 1. 找订单
-    existing = (
+    proof_path = payload.payment_proof_url.strip()
+
+    if not proof_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Payment proof path cannot be empty"
+        )
+
+    try:
+        supabase.rpc(
+            "submit_order_payment_proof",
+            {
+                "p_order_id": order_id,
+                "p_user_id": current_user.id,
+                "p_payment_proof_url": proof_path,
+            }
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        # Keep user-facing errors useful without exposing internals.
+        if "Payment window has expired" in message:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The 24-hour payment window has expired. "
+                    "This order can no longer accept payment proof."
+                )
+            )
+
+        if "already been submitted" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="Payment proof has already been submitted"
+            )
+
+        if "permission" in message.lower():
+            raise HTTPException(
+                status_code=403,
+                detail="You do not have permission to update this order"
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to submit payment proof: {message}"
+        )
+
+    response = (
         supabase
         .table("orders")
         .select("*")
         .eq("id", order_id)
         .eq("user_id", current_user.id)
+        .single()
         .execute()
     )
 
-    if not existing.data:
+    if not response.data:
         raise HTTPException(
             status_code=404,
             detail="Order not found"
         )
 
-    order = existing.data[0]
+    return response.data
 
-    # 2. 只有 pending payment 才能提交 proof
-    if order["payment_status"] != "pending":
-        raise HTTPException(
-            status_code=400,
-            detail="Payment proof cannot be submitted for this order"
-        )
-
-    # 3. 检查 proof URL 不可以是空的
-    if not payload.payment_proof_url.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Payment proof URL cannot be empty"
-        )
-
-    # 4. 更新 payment proof
+@app.get("/orders/{order_id}")
+def get_my_order(
+    order_id: str,
+    current_user=Depends(get_current_user)
+):
     response = (
         supabase
         .table("orders")
-        .update({
-            "payment_proof_url": payload.payment_proof_url
-        })
+        .select(
+            "*, order_items(*), addresses(*), order_status_history(*), order_cancellation_requests(*), order_refund_history(*)"
+        )
         .eq("id", order_id)
         .eq("user_id", current_user.id)
         .execute()
@@ -1250,18 +1500,60 @@ def upload_payment_proof(
 
     return response.data[0]
 
-@app.get("/orders/{order_id}")
-def get_my_order(
+@app.patch("/admin/orders/{order_id}/payment")
+def verify_payment(
     order_id: str,
+    payload: PaymentVerify,
     current_user=Depends(get_current_user)
 ):
+    require_admin(current_user)
+
+    if payload.payment_status != "verified":
+        raise HTTPException(
+            status_code=400,
+            detail="Payment can only be verified"
+        )
+
+    try:
+        supabase.rpc(
+            "verify_order_payment",
+            {
+                "p_order_id": order_id,
+                "p_changed_by": current_user.id,
+            }
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        if "already verified" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="Payment is already verified"
+            )
+
+        if "Cancelled orders" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="Cancelled orders cannot be verified"
+            )
+
+        if "Payment proof" in message:
+            raise HTTPException(
+                status_code=400,
+                detail="A valid payment proof is required before verification"
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to verify payment: {message}"
+        )
+
     response = (
         supabase
         .table("orders")
-        .select(
-            "*, order_items(*), addresses(*), order_status_history(*)"
-        )
+        .select("*")
         .eq("id", order_id)
+        .single()
         .execute()
     )
 
@@ -1271,116 +1563,7 @@ def get_my_order(
             detail="Order not found"
         )
 
-    order = response.data[0]
-
-    # Security check
-    if order["user_id"] != current_user.id:
-        raise HTTPException(
-            status_code=403,
-            detail="You do not have permission to view this order"
-        )
-
-    return order
-
-@app.patch("/admin/orders/{order_id}/payment")
-def verify_payment(
-    order_id: str,
-    payload: PaymentVerify,
-    current_user=Depends(get_current_user)
-):
-    require_admin(current_user)
-
-    # 1. Only allow verifying payment
-    if payload.payment_status != "verified":
-        raise HTTPException(
-            status_code=400,
-            detail="Payment can only be verified"
-        )
-
-    # 2. Find order
-    order_response = (
-        supabase
-        .table("orders")
-        .select("*")
-        .eq("id", order_id)
-        .single()
-        .execute()
-    )
-
-    if not order_response.data:
-        raise HTTPException(
-            status_code=404,
-            detail="Order not found"
-        )
-
-    order = order_response.data
-
-    # 3. Prevent verifying an already verified payment
-    if order["payment_status"] == "verified":
-        raise HTTPException(
-            status_code=400,
-            detail="Payment is already verified"
-        )
-
-    # 4. Payment proof is required
-    if not order.get("payment_proof_url"):
-        raise HTTPException(
-            status_code=400,
-            detail="Payment proof is required before verification"
-        )
-
-    # 5. Payment must currently be pending
-    if order["payment_status"] != "pending":
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Payment cannot be verified from "
-                f"{order['payment_status']} status"
-            )
-        )
-
-    # 6. Verify payment
-    payment_response = (
-        supabase
-        .table("orders")
-        .update({
-            "payment_status": "verified"
-        })
-        .eq("id", order_id)
-        .execute()
-    )
-
-    if not payment_response.data:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to verify payment"
-        )
-
-    # 7. Move order to processing
-    status_response = (
-        supabase
-        .table("orders")
-        .update({
-            "status": "processing"
-        })
-        .eq("id", order_id)
-        .execute()
-    )
-
-    if not status_response.data:
-        raise HTTPException(
-            status_code=500,
-            detail="Payment verified but failed to update order status"
-        )
-
-    # 8. Record order status history
-    supabase.table("order_status_history").insert({
-        "order_id": order_id,
-        "status": "processing",
-        "changed_by": current_user.id
-    }).execute()
-
-    return status_response.data[0]
+    return response.data
 
 @app.patch("/admin/orders/{order_id}/status")
 def update_order_status(
@@ -1418,7 +1601,8 @@ def update_order_status(
     new_status = payload.status
     payment_status = order["payment_status"]
 
-    # 3. If status is unchanged, do nothing
+    # 3. If status is unchanged, do nothing.
+    #    cancelled -> cancelled is therefore also safe here.
     if current_status == new_status:
         return order
 
@@ -1426,13 +1610,16 @@ def update_order_status(
     allowed_transitions = {
         "pending_payment": ["processing", "cancelled"],
         "processing": ["ready_to_ship", "cancelled"],
-        "ready_to_ship": ["shipped"],
+        "ready_to_ship": ["shipped", "cancelled"],
         "shipped": ["delivered"],
         "delivered": [],
         "cancelled": []
     }
 
-    allowed_next_statuses = allowed_transitions.get(current_status, [])
+    allowed_next_statuses = allowed_transitions.get(
+        current_status,
+        []
+    )
 
     if new_status not in allowed_next_statuses:
         raise HTTPException(
@@ -1443,45 +1630,219 @@ def update_order_status(
             )
         )
 
-    # 5. Payment must be verified before processing
-    if new_status == "processing" and payment_status != "verified":
-        raise HTTPException(
-            status_code=400,
-            detail="Payment must be verified before order can enter processing"
+    # 5. Cancellation is special:
+    #    status update + stock restoration + history are performed
+    #    atomically inside PostgreSQL.
+    if new_status == "cancelled":
+        try:
+            supabase.rpc(
+                "cancel_order_and_restore_stock",
+                {
+                    "p_order_id": order_id,
+                    "p_changed_by": current_user.id,
+                    "p_reason": payload.cancellation_reason
+                }
+            ).execute()
+        except Exception as exc:
+            message = str(exc)
+
+            if "Order cannot be cancelled" in message:
+                raise HTTPException(
+                    status_code=409,
+                    detail=message
+                )
+
+            if "Order not found" in message:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Order not found"
+                )
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unable to cancel order: {message}"
+            )
+
+        cancelled_order = (
+            supabase
+            .table("orders")
+            .select("*")
+            .eq("id", order_id)
+            .single()
+            .execute()
         )
 
-    # 6. Update order status
-    response = (
+        if not cancelled_order.data:
+            raise HTTPException(
+                status_code=500,
+                detail="Order was cancelled but could not be reloaded"
+            )
+
+        return cancelled_order.data
+
+    # 6. Payment must be verified before processing
+    if (
+        new_status == "processing"
+        and payment_status != "verified"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Payment must be verified before order "
+                "can enter processing"
+            )
+        )
+
+    # 7. Normal non-cancellation transitions are also atomic.
+    try:
+        supabase.rpc(
+            "transition_order_status",
+            {
+                "p_order_id": order_id,
+                "p_new_status": new_status,
+                "p_changed_by": current_user.id,
+            }
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        if "Invalid status transition" in message:
+            raise HTTPException(
+                status_code=409,
+                detail=message
+            )
+
+        if "Payment must be verified" in message:
+            raise HTTPException(
+                status_code=400,
+                detail="Payment must be verified before processing"
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to update order status: {message}"
+        )
+
+    updated_order = (
         supabase
         .table("orders")
-        .update({"status": new_status})
+        .select("*")
         .eq("id", order_id)
+        .single()
         .execute()
     )
 
-    if not response.data:
+    if not updated_order.data:
         raise HTTPException(
             status_code=404,
             detail="Order not found"
         )
 
-    # 7. Write status history
-    supabase.table("order_status_history").insert({
-        "order_id": order_id,
-        "status": new_status,
-        "changed_by": current_user.id
-    }).execute()
+    return updated_order.data
 
-    return response.data[0]
+
+@app.post("/orders/{order_id}/cancellation-request")
+def request_order_cancellation(
+    order_id: str,
+    payload: CancellationRequestCreate,
+    current_user=Depends(get_current_user)
+):
+    try:
+        response = supabase.rpc(
+            "request_order_cancellation",
+            {
+                "p_order_id": order_id,
+                "p_user_id": current_user.id,
+                "p_reason": payload.reason.strip(),
+            }
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        if "Order not found" in message:
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
+
+        if "already pending" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="A cancellation request is already pending"
+            )
+
+        if "can no longer be requested" in message:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This order can no longer be cancelled because "
+                    "fulfilment has progressed too far."
+                )
+            )
+
+        if "reason is required" in message:
+            raise HTTPException(
+                status_code=400,
+                detail="Cancellation reason is required"
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to request cancellation: {message}"
+        )
+
+    request_id = response.data
+
+    request = (
+        supabase
+        .table("order_cancellation_requests")
+        .select("*")
+        .eq("id", request_id)
+        .eq("user_id", current_user.id)
+        .single()
+        .execute()
+    )
+
+    if not request.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Cancellation request was created but could not be reloaded"
+        )
+
+    return request.data
+
 
 @app.get("/orders/{order_id}/history")
-def get_order_history(order_id: str, current_user = Depends(get_current_user)):
-    order = supabase.table("orders").select("user_id").eq("id", order_id).single().execute()
-    if not order.data:
-        raise HTTPException(status_code=404, detail="Order not found")
+def get_order_history(
+    order_id: str,
+    current_user=Depends(get_current_user)
+):
+    owned_order = (
+        supabase
+        .table("orders")
+        .select("id")
+        .eq("id", order_id)
+        .eq("user_id", current_user.id)
+        .execute()
+    )
 
-    if order.data["user_id"] != current_user.id:
+    if not owned_order.data:
+        # Admins may inspect any order history.
         require_admin(current_user)
+
+        admin_order = (
+            supabase
+            .table("orders")
+            .select("id")
+            .eq("id", order_id)
+            .execute()
+        )
+
+        if not admin_order.data:
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
 
     response = (
         supabase
@@ -1491,6 +1852,117 @@ def get_order_history(order_id: str, current_user = Depends(get_current_user)):
         .order("changed_at")
         .execute()
     )
+
+    return response.data
+
+@app.get("/admin/products")
+def get_admin_products(
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    response = (
+        supabase
+        .table("products")
+        .select(
+            "id, name, slug, price, stock_quantity, status, category_id, created_at, updated_at"
+        )
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    return response.data
+
+# ---------- Admin Product Inventory ----------
+
+@app.get("/admin/products/{product_id}/inventory-adjustments")
+def get_product_inventory_adjustments(
+    product_id: str,
+    current_user=Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    product = (
+        supabase
+        .table("products")
+        .select("id")
+        .eq("id", product_id)
+        .execute()
+    )
+
+    if not product.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found",
+        )
+
+    response = (
+        supabase
+        .table("product_inventory_adjustments")
+        .select(
+            "id, product_id, previous_quantity, adjustment, "
+            "new_quantity, mode, reason, note, changed_by, created_at"
+        )
+        .eq("product_id", product_id)
+        .order("created_at", desc=True)
+        .limit(50)
+        .execute()
+    )
+
+    return response.data
+
+
+@app.post("/admin/products/{product_id}/inventory-adjustments")
+def create_product_inventory_adjustment(
+    product_id: str,
+    adjustment: InventoryAdjustmentCreate,
+    current_user=Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    try:
+        response = supabase.rpc(
+            "adjust_product_inventory",
+            {
+                "p_product_id": product_id,
+                "p_changed_by": current_user.id,
+                "p_mode": adjustment.mode,
+                "p_quantity": adjustment.quantity,
+                "p_reason": adjustment.reason,
+                "p_note": adjustment.note,
+            },
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        if "Product not found" in message:
+            raise HTTPException(
+                status_code=404,
+                detail="Product not found",
+            )
+
+        if "Inventory cannot go below zero" in message:
+            raise HTTPException(
+                status_code=400,
+                detail="Inventory cannot go below zero",
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail="Could not adjust inventory",
+        )
+
+    if not response.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Inventory adjustment returned no data",
+        )
+
+    # Depending on the Supabase/PostgREST response shape, a composite
+    # return may arrive as a dict or a one-item list.
+    if isinstance(response.data, list):
+        return response.data[0]
+
     return response.data
 
 
@@ -1610,11 +2082,11 @@ def get_monthly_sales(current_user = Depends(get_current_user)):
 def get_analytics_growth(current_user = Depends(get_current_user)):
     require_admin(current_user)
 
-    from datetime import datetime
+    from datetime import datetime, timezone
 
-    # 1. 用真实的当前日期决定 current_month 和 previous_month
+    # 1. 用真实的 UTC 当前日期决定 current_month 和 previous_month
     #    不依赖数据里有没有订单
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     current_month = now.strftime("%Y-%m")
 
     if now.month == 1:
@@ -1761,6 +2233,179 @@ def remove_product_from_collection(link: ProductCollectionLink, current_user = D
     return {"message": "Removed from collection"}
 
 
+
+@app.patch("/admin/orders/{order_id}/cancellation-request/{request_id}")
+def resolve_order_cancellation_request(
+    order_id: str,
+    request_id: str,
+    payload: CancellationRequestResolve,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    existing = (
+        supabase
+        .table("order_cancellation_requests")
+        .select("id, order_id, status")
+        .eq("id", request_id)
+        .eq("order_id", order_id)
+        .single()
+        .execute()
+    )
+
+    if not existing.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Cancellation request not found"
+        )
+
+    try:
+        supabase.rpc(
+            "resolve_order_cancellation_request",
+            {
+                "p_request_id": request_id,
+                "p_changed_by": current_user.id,
+                "p_action": payload.action,
+                "p_resolution_message": (
+                    payload.resolution_message.strip()
+                    if payload.resolution_message
+                    else None
+                ),
+                "p_admin_note": (
+                    payload.admin_note.strip()
+                    if payload.admin_note
+                    else None
+                ),
+            }
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        if "already been resolved" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="Cancellation request has already been resolved"
+            )
+
+        if "Order cannot be cancelled" in message:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The order can no longer be cancelled from its "
+                    "current fulfilment status."
+                )
+            )
+
+        if "Cancellation request not found" in message:
+            raise HTTPException(
+                status_code=404,
+                detail="Cancellation request not found"
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to resolve cancellation request: {message}"
+        )
+
+    refreshed = (
+        supabase
+        .table("orders")
+        .select("""
+            *,
+            order_items(*),
+            addresses(*),
+            customer_profiles(full_name, phone),
+            order_status_history(*),
+            order_refund_history(*),
+            order_cancellation_requests(*)
+        """)
+        .eq("id", order_id)
+        .single()
+        .execute()
+    )
+
+    if not refreshed.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Request resolved but order could not be reloaded"
+        )
+
+    return refreshed.data
+
+
+@app.patch("/admin/orders/{order_id}/refund")
+def complete_order_refund(
+    order_id: str,
+    payload: RefundComplete,
+    current_user=Depends(get_current_user)
+):
+    require_admin(current_user)
+
+    try:
+        supabase.rpc(
+            "complete_order_refund",
+            {
+                "p_order_id": order_id,
+                "p_changed_by": current_user.id,
+                "p_reference": payload.reference.strip(),
+                "p_note": (
+                    payload.note.strip()
+                    if payload.note
+                    else None
+                ),
+            }
+        ).execute()
+    except Exception as exc:
+        message = str(exc)
+
+        if "Order not found" in message:
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
+
+        if (
+            "Only cancelled orders" in message
+            or "payment was not verified" in message
+            or "Refund is not required" in message
+            or "Refund reference is required" in message
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=message
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to complete refund: {message}"
+        )
+
+    refreshed = (
+        supabase
+        .table("orders")
+        .select("""
+            *,
+            order_items(*),
+            addresses(*),
+            customer_profiles(full_name, phone),
+            order_status_history(*),
+            order_refund_history(*),
+            order_cancellation_requests(*)
+        """)
+        .eq("id", order_id)
+        .single()
+        .execute()
+    )
+
+    if not refreshed.data:
+        raise HTTPException(
+            status_code=500,
+            detail="Refund completed but order could not be reloaded"
+        )
+
+    return refreshed.data
+
+
 @app.get("/admin/orders")
 def get_all_orders(
     current_user = Depends(get_current_user),
@@ -1774,7 +2419,7 @@ def get_all_orders(
     query = (
         supabase
         .table("orders")
-        .select("*, order_items(*), addresses(*), customer_profiles(full_name, phone)")
+        .select("*, order_items(*), addresses(*), customer_profiles(full_name, phone), order_cancellation_requests(*)")
         .order("created_at", desc=True)
         .range(offset, offset + limit - 1)
     )
@@ -1795,18 +2440,20 @@ def get_order_detail(
     require_admin(current_user)
 
     response = (
-    supabase
-    .table("orders")
-    .select("""
-        *,
-        order_items(*),
-        addresses(*),
-        customer_profiles(full_name, phone),
-        order_status_history(*)
-    """)
-    .eq("id", order_id)
-    .execute()
-)
+        supabase
+        .table("orders")
+        .select("""
+            *,
+            order_items(*),
+            addresses(*),
+            customer_profiles(full_name, phone),
+            order_status_history(*),
+            order_refund_history(*),
+            order_cancellation_requests(*)
+        """)
+        .eq("id", order_id)
+        .execute()
+    )
 
     if not response.data:
         raise HTTPException(
@@ -1815,3 +2462,4 @@ def get_order_detail(
         )
 
     return response.data[0]
+

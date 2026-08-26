@@ -1,0 +1,92 @@
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/src/lib/supabase";
+
+export default function AdminLoginPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    setLoading(true);
+    setMessage("");
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      setMessage(error.message);
+      setLoading(false);
+      return;
+    }
+
+    setMessage("Login successful");
+    setLoading(false);
+
+    router.push("/admin/products");
+  }
+
+  return (
+    <main className="min-h-screen flex items-center justify-center px-6">
+      <div className="w-full max-w-md">
+        <p className="mb-2 text-sm uppercase tracking-[0.25em]">
+          Studio Montro
+        </p>
+
+        <h1 className="text-4xl mb-8">
+              <span className="text-[#50250a]">Admin Login</span>
+            </h1>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <label htmlFor="email" className="block mb-2 text-sm">
+              Email
+            </label>
+
+            <input
+              id="email"
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              required
+              className="w-full border border-black/20 bg-transparent px-4 py-3 outline-none"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="password" className="block mb-2 text-sm">
+              Password
+            </label>
+
+            <input
+              id="password"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+              className="w-full border border-black/20 bg-transparent px-4 py-3 outline-none"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-[#50250a] px-4 py-3 text-[#f5f1e8] disabled:opacity-50"
+          >
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
+
+        {message && <p className="mt-4 text-sm">{message}</p>}
+      </div>
+    </main>
+  );
+}
