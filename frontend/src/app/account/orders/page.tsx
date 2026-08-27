@@ -87,14 +87,14 @@ export default function AccountOrdersPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#756d65]">Loading your orders...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
       <header className="border-b border-[#cec6bc] pb-10">
         <div className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
           <div>

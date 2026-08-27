@@ -11,7 +11,7 @@ import {
 } from "react";
 import { authFetch } from "@/src/lib/authFetch";
 import { supabase } from "@/src/lib/supabase";
-import { requestAuthPrompt } from "@/src/components/AuthRequiredPrompt.tsx";
+import { requestAuthPrompt } from "@/src/components/AuthRequiredPrompt";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -217,10 +217,10 @@ export function CartProvider({
         } = await supabase.auth.getSession();
 
         if (!session) {
+          showMessage("Sign in to add pieces to your bag.");
           requestAuthPrompt({
             title: "Add this piece to your bag",
-            message:
-              "Log in or create an account to keep your bag connected to your Studio MONTRO account.",
+            message: "Sign in to add pieces to your bag.",
           });
           return false;
         }
@@ -267,10 +267,10 @@ export function CartProvider({
           err instanceof Error &&
           err.message === "AUTH_REQUIRED"
         ) {
+          showMessage("Sign in to add pieces to your bag.");
           requestAuthPrompt({
             title: "Add this piece to your bag",
-            message:
-              "Log in or create an account to keep your bag connected to your Studio MONTRO account.",
+            message: "Sign in to add pieces to your bag.",
           });
           return false;
         }

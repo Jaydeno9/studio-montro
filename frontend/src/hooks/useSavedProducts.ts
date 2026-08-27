@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/src/lib/supabase";
 import { authFetch } from "@/src/lib/authFetch";
-import { requestAuthPrompt } from "@/src/components/AuthRequiredPrompt.tsx";
+import { requestAuthPrompt } from "@/src/components/AuthRequiredPrompt";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -101,10 +101,10 @@ export function useSavedProducts() {
         } = await supabase.auth.getSession();
 
         if (!session) {
+          setMessage("Sign in to save this piece.");
           requestAuthPrompt({
             title: "Save this piece",
-            message:
-              "Log in or create an account to keep furniture you want to revisit in your saved collection.",
+            message: "Sign in to save this piece.",
           });
           return;
         }
@@ -157,10 +157,10 @@ export function useSavedProducts() {
           err instanceof Error &&
           err.message === "AUTH_REQUIRED"
         ) {
+          setMessage("Sign in to save this piece.");
           requestAuthPrompt({
             title: "Save this piece",
-            message:
-              "Log in or create an account to keep furniture you want to revisit in your saved collection.",
+            message: "Sign in to save this piece.",
           });
           return;
         }

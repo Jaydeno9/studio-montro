@@ -119,7 +119,7 @@ export default function OrderSuccessPage() {
 
   if (loading || isAuthenticated === null) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#746c64]">Confirming your order...</p>
       </main>
     );
@@ -127,7 +127,7 @@ export default function OrderSuccessPage() {
 
   if (!isAuthenticated) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <div className="border-b border-[#cec6bc] pb-10">
           <p className="text-[10px] uppercase tracking-[0.18em] text-[#8a8178]">
             Order access
@@ -171,7 +171,7 @@ export default function OrderSuccessPage() {
 
   if (error || !order) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#8b3a34]">{error || "Order not found."}</p>
 
         <Link
@@ -211,7 +211,7 @@ export default function OrderSuccessPage() {
   )}`;
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-8 md:pt-10 text-[#25211d]">
       <section className="border-b border-[#cec6bc] pb-12">
         <p className="text-[11px] uppercase tracking-[0.17em] text-[#817870]">
           Order received

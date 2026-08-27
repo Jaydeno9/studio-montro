@@ -41,7 +41,6 @@ type RefundHistory = {
   event: "required" | "completed";
   amount: number;
   reference: string | null;
-  note: string | null;
   created_at: string;
 };
 
@@ -57,6 +56,7 @@ type Order = {
   payment_status: "pending" | "verified";
   payment_method: string | null;
   payment_proof_url: string | null;
+  payment_proof_submitted_at: string | null;
   refund_status: "not_required" | "required" | "completed";
   refund_reference: string | null;
   refund_note: string | null;
@@ -159,7 +159,23 @@ export default function AccountOrderDetailPage() {
       },
     ];
 
+    if (order.payment_proof_submitted_at) {
+      events.push({
+        key: "payment-proof-submitted",
+        label: "Payment proof submitted",
+        detail: "Your transfer receipt was received for studio verification.",
+        at: order.payment_proof_submitted_at,
+      });
+    }
+
     for (const item of order.order_status_history ?? []) {
+      // checkout_order already creates the initial pending_payment history row.
+      // "Order placed" above represents that event more clearly for customers,
+      // so do not render it twice.
+      if (item.status === "pending_payment") {
+        continue;
+      }
+
       events.push({
         key: `status-${item.id}`,
         label: formatStatusEvent(item.status),
@@ -204,7 +220,7 @@ export default function AccountOrderDetailPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#756d65]">Loading order...</p>
       </main>
     );
@@ -212,7 +228,7 @@ export default function AccountOrderDetailPage() {
 
   if (error || !order) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#713f38]">{error || "Order not found."}</p>
         <Link
           href="/account/orders"
@@ -229,7 +245,7 @@ export default function AccountOrderDetailPage() {
     : order.addresses;
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
       <header className="border-b border-[#cec6bc] pb-9">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
           <Link
@@ -484,7 +500,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 function formatStatusEvent(status: string) {
   const labels: Record<string, string> = {
     pending_payment: "Awaiting payment",
-    processing: "Order entered preparation",
+    processing: "Payment verified · Order preparation started",
     ready_to_ship: "Order ready to ship",
     shipped: "Order shipped",
     delivered: "Order delivered",

@@ -218,14 +218,14 @@ export default function AccountProfilePage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#756d65]">Loading your profile...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
       <header className="border-b border-[#cec6bc] pb-10">
         <Link
           href="/account"

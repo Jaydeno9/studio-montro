@@ -302,9 +302,9 @@ export default function CustomerOrderPayment({
       )}
 
       {open && (
-        <div className="fixed inset-0 z-[180] overflow-y-auto bg-[#25211d]/30 px-4 py-8 backdrop-blur-[2px] md:px-6">
-          <div className="mx-auto flex min-h-full max-w-[760px] items-center justify-center">
-            <div className="relative w-full border border-[#c9c0b6] bg-[#f4f0e9] shadow-[0_28px_90px_rgba(37,33,29,0.18)]">
+        <div className="fixed inset-0 z-[9999] overflow-y-auto bg-[#25211d]/40 px-4 pb-4 pt-22 backdrop-blur-[3px] md:px-6 md:pt-22">
+          <div className="mx-auto flex min-h-full max-w-[760px] items-start justify-center">
+            <div className="relative z-[1] w-full border border-[#c9c0b6] bg-[#f4f0e9] shadow-[0_28px_90px_rgba(37,33,29,0.18)]">
               <button
                 type="button"
                 onClick={requestClose}

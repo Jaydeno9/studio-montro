@@ -65,7 +65,7 @@ export default function CartPage() {
 
   if (cartLoading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#746c64]">Loading your bag...</p>
       </main>
     );
@@ -73,7 +73,7 @@ export default function CartPage() {
 
   if (!isAuthenticated) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <div className="border-b border-[#cec6bc] pb-10">
           <p className="text-[10px] uppercase tracking-[0.18em] text-[#8a8178]">
             Your bag
@@ -125,7 +125,7 @@ export default function CartPage() {
 
   if (cartItems.length === 0) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <div className="flex items-end justify-between border-b border-[#cec6bc] pb-8">
           <p className="text-5xl font-medium tracking-[-0.045em] md:text-7xl">
             Bag
@@ -160,7 +160,7 @@ export default function CartPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-8 md:pt-10 text-[#25211d]">
       <div className="flex items-end justify-between border-b border-[#cec6bc] pb-8">
         <p className="text-5xl font-medium tracking-[-0.045em] md:text-7xl">
           Bag

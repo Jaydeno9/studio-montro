@@ -126,7 +126,7 @@ export default function AccountOverviewPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
       <header className="border-b border-[#cec6bc] pb-10">
         <div className="flex items-start justify-between gap-8">
           <div>

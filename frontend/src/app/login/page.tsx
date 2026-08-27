@@ -1,12 +1,31 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/src/lib/supabase";
+import { getSafeReturnTo, withReturnTo } from "@/src/lib/authRedirect";
+import { isValidEmail } from "@/src/lib/emailValidation";
 
-export default function LoginPage() {
+function getLoginErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("invalid login credentials"))
+    return "Incorrect email or password.";
+  if (message.includes("email not confirmed"))
+    return "Please verify your email before signing in.";
+  if (message.includes("rate") || message.includes("too many"))
+    return "Too many attempts. Please try again shortly.";
+  return "We couldn't sign you in. Please try again.";
+}
+
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = getSafeReturnTo(searchParams.get("returnTo"));
+  const callbackError =
+    searchParams.get("authError") === "callback_failed"
+      ? "We couldn't verify that sign-in link. Please try signing in again."
+      : "";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -17,12 +36,19 @@ export default function LoginPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const normalizedEmail = email.trim();
+
+    if (!isValidEmail(normalizedEmail)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError("");
 
       const { data, error } = await supabase.auth.signInWithPassword({
-        email,
+        email: normalizedEmail,
         password,
       });
 
@@ -45,14 +71,14 @@ export default function LoginPage() {
       if (profile?.is_admin) {
         router.push("/admin/products");
       } else {
-        router.push("/products");
+        router.push(returnTo);
       }
 
       router.refresh();
     } catch (err) {
       console.error(err);
 
-      setError(err instanceof Error ? err.message : "Unable to sign in.");
+      setError(getLoginErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -117,10 +143,21 @@ export default function LoginPage() {
                   className="mt-3 w-full bg-transparent text-base text-[#25211d] outline-none placeholder:text-[#a19890]"
                   placeholder="Your password"
                 />
+
+                <Link
+                  href={withReturnTo("/forgot-password", returnTo)}
+                  className="mt-3 inline-block text-sm underline decoration-[#aaa097] underline-offset-4 transition hover:text-black"
+                >
+                  Forgot password?
+                </Link>
               </label>
             </div>
 
-            {error && <p className="mt-4 text-sm text-[#8b3a34]">{error}</p>}
+            {(error || callbackError) && (
+              <p className="mt-4 text-sm text-[#8b3a34]">
+                {error || callbackError}
+              </p>
+            )}
 
             <button
               type="submit"
@@ -135,7 +172,7 @@ export default function LoginPage() {
               <p className="text-[#756d65]">New to Studio MONTRO?</p>
 
               <Link
-                href="/signup"
+                href={withReturnTo("/signup", returnTo)}
                 className="underline decoration-[#aaa097] underline-offset-4 transition hover:text-black"
               >
                 Create account
@@ -152,5 +189,13 @@ export default function LoginPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }

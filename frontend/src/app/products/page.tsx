@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSavedProducts } from "@/src/hooks/useSavedProducts";
 import { useCart } from "@/src/hooks/useCart";
 
@@ -28,10 +29,8 @@ type Product = {
   dimensions: string | null;
   status: "active" | "inactive";
   category: Category | null;
-
   primary_image: string | null;
   secondary_image: string | null;
-
   colors: ProductColor[];
   created_at: string;
 };
@@ -47,22 +46,90 @@ const SORT_LABELS: Record<SortOption, string> = {
   name_asc: "Name: A–Z",
 };
 
-export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>([]);
+const ROOM_FILTERS: Record<
+  string,
+  {
+    label: string;
+    categories: string[];
+    fallbackHref: string;
+    fallbackLabel: string;
+  }
+> = {
+  "kids-room": {
+    label: "Kids' Room",
+    categories: ["lighting", "decor", "objects"],
+    fallbackHref: "/products?category=lighting",
+    fallbackLabel: "Explore lighting",
+  },
+  outdoor: {
+    label: "The Green Space",
+    categories: ["lighting", "decor", "objects"],
+    fallbackHref: "/products",
+    fallbackLabel: "Explore all pieces",
+  },
+  "living-room": {
+    label: "Living Room",
+    categories: [
+      "seating",
+      "tables",
+      "lighting",
+      "decor",
+      "objects",
+      "furniture",
+    ],
+    fallbackHref: "/products",
+    fallbackLabel: "Explore all pieces",
+  },
+  kitchen: {
+    label: "Kitchen",
+    categories: ["tables", "lighting", "decor", "objects"],
+    fallbackHref: "/products?category=objects",
+    fallbackLabel: "Explore objects",
+  },
+};
 
+function isSortOption(value: string | null): value is SortOption {
+  return (
+    value === "newest" ||
+    value === "price_asc" ||
+    value === "price_desc" ||
+    value === "name_asc"
+  );
+}
+
+export default function ProductsPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-[#f4f0e9] px-8 py-24">
+          <p className="text-sm text-[#746c64]">Loading shop...</p>
+        </main>
+      }
+    >
+      <ProductsPageContent />
+    </Suspense>
+  );
+}
+
+function ProductsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const searchTerm = searchParams.get("search")?.trim() ?? "";
+  const selectedCategory = searchParams.get("category")?.trim() || "all";
+  const selectedRoom = searchParams.get("room")?.trim() ?? "";
+  const roomFilter = selectedRoom ? ROOM_FILTERS[selectedRoom] : undefined;
+
+  const sortParam = searchParams.get("sort");
+  const sort: SortOption = isSortOption(sortParam) ? sortParam : "newest";
+
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [selectedCategory, setSelectedCategory] = useState("all");
-
-  const [sort, setSort] = useState<SortOption>("newest");
-
   const [inStockOnly, setInStockOnly] = useState(false);
-
   const [minPrice, setMinPrice] = useState("");
-
   const [maxPrice, setMaxPrice] = useState("");
-
   const [filtersOpen, setFiltersOpen] = useState(false);
 
   const [quickAddProductId, setQuickAddProductId] = useState<string | null>(
@@ -78,6 +145,50 @@ export default function ProductsPage() {
   } = useSavedProducts();
 
   const { busyIds: cartBusyIds, message: cartMessage, addItem } = useCart();
+
+  function updateShopUrl({
+    search,
+    category,
+    nextSort,
+  }: {
+    search?: string;
+    category?: string;
+    nextSort?: SortOption;
+  }) {
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (search !== undefined) {
+      const trimmed = search.trim();
+
+      if (trimmed) {
+        params.set("search", trimmed);
+      } else {
+        params.delete("search");
+      }
+    }
+
+    if (category !== undefined) {
+      if (category && category !== "all") {
+        params.set("category", category);
+      } else {
+        params.delete("category");
+      }
+    }
+
+    if (nextSort !== undefined) {
+      if (nextSort !== "newest") {
+        params.set("sort", nextSort);
+      } else {
+        params.delete("sort");
+      }
+    }
+
+    const query = params.toString();
+
+    router.replace(query ? `/products?${query}` : "/products", {
+      scroll: false,
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -133,10 +244,40 @@ export default function ProductsPage() {
   const visibleProducts = useMemo(() => {
     let result = [...products];
 
+    if (searchTerm) {
+      const normalizedSearch = searchTerm.toLowerCase();
+
+      result = result.filter((product) => {
+        const haystack = [
+          product.name,
+          product.description,
+          product.material,
+          product.dimensions,
+          product.category?.name,
+          ...product.colors.map((color) => color.color_name),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return haystack.includes(normalizedSearch);
+      });
+    }
+
     if (selectedCategory !== "all") {
       result = result.filter(
         (product) => product.category?.slug === selectedCategory,
       );
+    }
+
+    if (roomFilter) {
+      result = result.filter((product) => {
+        const categorySlug = product.category?.slug;
+
+        return categorySlug
+          ? roomFilter.categories.includes(categorySlug)
+          : false;
+      });
     }
 
     if (inStockOnly) {
@@ -163,13 +304,10 @@ export default function ProductsPage() {
       switch (sort) {
         case "price_asc":
           return a.price - b.price;
-
         case "price_desc":
           return b.price - a.price;
-
         case "name_asc":
           return a.name.localeCompare(b.name);
-
         case "newest":
         default:
           return (
@@ -179,7 +317,16 @@ export default function ProductsPage() {
     });
 
     return result;
-  }, [products, selectedCategory, inStockOnly, minPrice, maxPrice, sort]);
+  }, [
+    products,
+    searchTerm,
+    selectedCategory,
+    roomFilter,
+    inStockOnly,
+    minPrice,
+    maxPrice,
+    sort,
+  ]);
 
   async function handleAddToCart(product: Product) {
     if (product.stock_quantity <= 0 || cartBusyIds.has(product.id)) {
@@ -216,6 +363,14 @@ export default function ProductsPage() {
     }
   }
 
+  function clearAllFilters() {
+    setInStockOnly(false);
+    setMinPrice("");
+    setMaxPrice("");
+    setFiltersOpen(false);
+    router.replace("/products");
+  }
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[#f4f0e9] px-8 py-24">
@@ -232,34 +387,81 @@ export default function ProductsPage() {
     );
   }
 
+  const activeFilterCount = [
+    inStockOnly,
+    minPrice !== "",
+    maxPrice !== "",
+  ].filter(Boolean).length;
+
   return (
     <main className="min-h-screen bg-[#f4f0e9] text-[#25211d]">
-      {/* =========================
-          SHOP HEADER
-      ========================== */}
-      <header className="px-8 pb-10 pt-20 md:pt-28">
-        <div className="flex items-end justify-between border-b border-[#cec6bc] pb-7">
-          <h1 className="text-5xl font-medium tracking-[-0.045em] md:text-7xl">
-            <span className="text-[#25211d]">Shop</span>
-          </h1>
+      <header className="px-8 pb-10 pt-8 md:pt-10">
+        <div className="border-b border-[#cec6bc] pb-7">
+          <div className="flex items-end justify-between gap-8">
+            <div>
+              <h1 className="text-5xl font-medium tracking-[-0.045em] md:text-7xl">
+                <span className="text-[#25211d]">Shop</span>
+              </h1>
 
-          <p className="pb-1 text-xs uppercase tracking-[0.16em] text-[#827970]">
-            {visibleProducts.length}{" "}
-            {visibleProducts.length === 1 ? "piece" : "pieces"}
-          </p>
+              {searchTerm && (
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <p className="text-sm text-[#756d65]">
+                    Results for “{searchTerm}”
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => updateShopUrl({ search: "" })}
+                    className="text-xs underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#25211d]"
+                  >
+                    Clear search
+                  </button>
+                </div>
+              )}
+
+              {roomFilter && (
+                <div className="mt-5 flex flex-wrap items-center gap-3">
+                  <p className="text-sm text-[#756d65]">
+                    Shop by room · {roomFilter.label}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const params = new URLSearchParams(
+                        searchParams.toString(),
+                      );
+                      params.delete("room");
+                      const query = params.toString();
+                      router.replace(
+                        query ? `/products?${query}` : "/products",
+                        {
+                          scroll: false,
+                        },
+                      );
+                    }}
+                    className="text-xs underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#25211d]"
+                  >
+                    Clear room
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <p className="pb-1 text-xs uppercase tracking-[0.16em] text-[#827970]">
+              {visibleProducts.length}{" "}
+              {visibleProducts.length === 1 ? "piece" : "pieces"}
+            </p>
+          </div>
         </div>
       </header>
 
-      {/* =========================
-          CATEGORY + CONTROLS
-      ========================== */}
       <section className="px-8">
         <div className="flex flex-col gap-5 border-b border-[#cec6bc] pb-5 lg:flex-row lg:items-center lg:justify-between">
-          {/* Categories */}
           <nav className="flex gap-6 overflow-x-auto pb-1">
             <button
               type="button"
-              onClick={() => setSelectedCategory("all")}
+              onClick={() => updateShopUrl({ category: "all" })}
               className={`shrink-0 text-sm transition ${
                 selectedCategory === "all"
                   ? "text-[#25211d]"
@@ -273,7 +475,7 @@ export default function ProductsPage() {
               <button
                 key={category.id}
                 type="button"
-                onClick={() => setSelectedCategory(category.slug)}
+                onClick={() => updateShopUrl({ category: category.slug })}
                 className={`shrink-0 text-sm transition ${
                   selectedCategory === category.slug
                     ? "text-[#25211d]"
@@ -285,7 +487,6 @@ export default function ProductsPage() {
             ))}
           </nav>
 
-          {/* Controls */}
           <div className="flex items-center gap-5">
             <button
               type="button"
@@ -293,13 +494,9 @@ export default function ProductsPage() {
               className="flex items-center gap-2 text-sm text-[#514b45] transition hover:text-black"
             >
               Filter
-              {(inStockOnly || minPrice || maxPrice) && (
+              {activeFilterCount > 0 && (
                 <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#25211d] px-1 text-[10px] text-[#f4f0e9]">
-                  {
-                    [inStockOnly, minPrice !== "", maxPrice !== ""].filter(
-                      Boolean,
-                    ).length
-                  }
+                  {activeFilterCount}
                 </span>
               )}
               <span className="text-xs">{filtersOpen ? "−" : "+"}</span>
@@ -312,7 +509,11 @@ export default function ProductsPage() {
 
               <select
                 value={sort}
-                onChange={(event) => setSort(event.target.value as SortOption)}
+                onChange={(event) =>
+                  updateShopUrl({
+                    nextSort: event.target.value as SortOption,
+                  })
+                }
                 className="cursor-pointer appearance-none bg-transparent pr-4 text-sm text-[#25211d] outline-none"
               >
                 {(Object.keys(SORT_LABELS) as SortOption[]).map((option) => (
@@ -325,7 +526,6 @@ export default function ProductsPage() {
           </div>
         </div>
 
-        {/* Filter Panel */}
         <div
           className={`grid transition-all duration-300 ${
             filtersOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
@@ -333,7 +533,6 @@ export default function ProductsPage() {
         >
           <div className="overflow-hidden">
             <div className="grid gap-10 border-b border-[#cec6bc] py-7 md:grid-cols-3">
-              {/* Availability */}
               <div>
                 <p className="mb-4 text-[11px] uppercase tracking-[0.14em] text-[#8a8178]">
                   Availability
@@ -351,7 +550,6 @@ export default function ProductsPage() {
                 </label>
               </div>
 
-              {/* Price */}
               <div>
                 <p className="mb-4 text-[11px] uppercase tracking-[0.14em] text-[#8a8178]">
                   Price
@@ -388,9 +586,8 @@ export default function ProductsPage() {
                 </div>
               </div>
 
-              {/* Filter status / clear */}
               <div className="flex items-end md:justify-end">
-                {inStockOnly || minPrice || maxPrice ? (
+                {activeFilterCount > 0 ? (
                   <button
                     type="button"
                     onClick={() => {
@@ -404,7 +601,7 @@ export default function ProductsPage() {
                   </button>
                 ) : (
                   <p className="text-xs text-[#9a9188]">
-                    Collection filters coming later.
+                    Refine by availability or price.
                   </p>
                 )}
               </div>
@@ -413,15 +610,62 @@ export default function ProductsPage() {
         </div>
       </section>
 
-      {/* =========================
-          PRODUCT GRID
-      ========================== */}
       <section className="px-8 pb-28 pt-8">
         {visibleProducts.length === 0 ? (
           <div className="py-28">
-            <p className="text-sm text-[#756d65]">
-              No pieces match this filter.
-            </p>
+            {roomFilter ? (
+              <>
+                <p className="text-[10px] uppercase tracking-[0.16em] text-[#8a8178]">
+                  {roomFilter.label}
+                </p>
+
+                <p className="mt-4 max-w-xl text-3xl font-medium tracking-[-0.03em] text-[#25211d] md:text-4xl">
+                  No pieces are currently curated for this room.
+                </p>
+
+                <p className="mt-4 max-w-lg text-sm leading-7 text-[#756d65]">
+                  We would rather show fewer relevant pieces than fill the room
+                  with products that do not belong here.
+                </p>
+
+                <div className="mt-7 flex flex-wrap items-center gap-5">
+                  <Link
+                    href={roomFilter.fallbackHref}
+                    className="inline-flex items-center gap-3 bg-[#4b1f26] px-5 py-3.5 text-sm text-[#f4efe7] transition hover:bg-[#5a2730]"
+                  >
+                    {roomFilter.fallbackLabel}
+                    <span>→</span>
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={clearAllFilters}
+                    className="text-sm text-[#625a53] underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#25211d]"
+                  >
+                    View all pieces
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-2xl font-medium tracking-[-0.025em]">
+                  No pieces found.
+                </p>
+
+                <p className="mt-3 max-w-md text-sm leading-6 text-[#756d65]">
+                  Try another search, choose a different category, or remove
+                  some filters.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={clearAllFilters}
+                  className="mt-6 border-b border-[#25211d] pb-1 text-sm"
+                >
+                  View all pieces
+                </button>
+              </>
+            )}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-x-4 gap-y-14 sm:grid-cols-2 lg:grid-cols-4">
@@ -430,7 +674,6 @@ export default function ProductsPage() {
 
               return (
                 <article key={product.id} className="group">
-                  {/* IMAGE */}
                   <div className="relative">
                     <Link href={`/products/${product.slug}`} className="block">
                       <div className="relative aspect-[4/5] overflow-hidden bg-[#e5dfd6]">
@@ -464,12 +707,9 @@ export default function ProductsPage() {
                       </div>
                     </Link>
 
-                    {/* SAVE */}
                     <button
                       type="button"
-                      onClick={() => {
-                        void toggleSaved(product.id);
-                      }}
+                      onClick={() => void toggleSaved(product.id)}
                       disabled={busyIds.has(product.id)}
                       aria-label={
                         isSaved
@@ -489,7 +729,6 @@ export default function ProductsPage() {
                       </svg>
                     </button>
 
-                    {/* STOCK LABEL */}
                     {product.stock_quantity <= 0 && (
                       <span className="absolute bottom-3 left-3 bg-[#f4f0e9]/90 px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#5e5750] backdrop-blur-sm">
                         Sold out
@@ -497,7 +736,6 @@ export default function ProductsPage() {
                     )}
                   </div>
 
-                  {/* INFO */}
                   <div className="pt-4">
                     <Link href={`/products/${product.slug}`}>
                       <div className="flex items-start justify-between gap-4">
@@ -522,7 +760,6 @@ export default function ProductsPage() {
                       </div>
                     </Link>
 
-                    {/* FINISHES */}
                     {product.colors.length > 0 && (
                       <div className="mt-3 flex items-center gap-1.5">
                         {product.colors.map((color) => (
@@ -543,7 +780,6 @@ export default function ProductsPage() {
                       </div>
                     )}
 
-                    {/* QUICK ADD */}
                     <div className="mt-5 border-t border-[#cfc7bd] pt-3">
                       {quickAddProductId === product.id ? (
                         <div>
@@ -594,9 +830,7 @@ export default function ProductsPage() {
 
                           <button
                             type="button"
-                            onClick={() => {
-                              void confirmQuickAdd(product);
-                            }}
+                            onClick={() => void confirmQuickAdd(product)}
                             disabled={
                               !quickAddColorId || cartBusyIds.has(product.id)
                             }
@@ -617,9 +851,7 @@ export default function ProductsPage() {
                             product.stock_quantity <= 0 ||
                             cartBusyIds.has(product.id)
                           }
-                          onClick={() => {
-                            void handleAddToCart(product);
-                          }}
+                          onClick={() => void handleAddToCart(product)}
                           className="flex w-full items-center justify-between text-left text-xs uppercase tracking-[0.12em] text-[#39332d] transition hover:opacity-50 disabled:cursor-not-allowed disabled:opacity-30"
                         >
                           <span>
@@ -643,6 +875,7 @@ export default function ProductsPage() {
           </div>
         )}
       </section>
+
       {(cartMessage || saveMessage) && (
         <div className="fixed bottom-6 right-6 z-50 max-w-[320px] border border-[#cfc7bd] bg-[#f4f0e9]/95 px-5 py-4 shadow-[0_10px_35px_rgba(37,33,29,0.12)] backdrop-blur-md">
           <div className="flex items-start gap-3">

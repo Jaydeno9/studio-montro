@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { authFetch } from "@/src/lib/authFetch";
@@ -123,12 +123,6 @@ export default function CheckoutPage() {
     };
   }, []);
 
-  const selectedAddress = useMemo(
-    () =>
-      savedAddresses.find((address) => address.id === selectedAddressId) ??
-      null,
-    [savedAddresses, selectedAddressId],
-  );
 
   async function createAddress() {
     const response = await authFetch(`${API_URL}/addresses`, {
@@ -227,7 +221,7 @@ export default function CheckoutPage() {
 
   if (cartLoading || pageLoading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#746c64]">Preparing checkout...</p>
       </main>
     );
@@ -235,7 +229,7 @@ export default function CheckoutPage() {
 
   if (!isAuthenticated) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <div className="border-b border-[#cec6bc] pb-10">
           <p className="text-[10px] uppercase tracking-[0.18em] text-[#8a8178]">
             Checkout
@@ -287,7 +281,7 @@ export default function CheckoutPage() {
 
   if (cartItems.length === 0) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <div className="border-b border-[#cec6bc] pb-8">
           <p className="text-5xl font-medium tracking-[-0.045em] md:text-7xl">
             Checkout
@@ -312,7 +306,7 @@ export default function CheckoutPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-8 md:pt-10 text-[#25211d]">
       <div className="flex items-end justify-between border-b border-[#cec6bc] pb-8">
         <div>
           <Link

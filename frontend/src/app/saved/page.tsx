@@ -159,7 +159,7 @@ export default function SavedPage() {
 
   if (isAuthenticated === null || loadingProducts) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <p className="text-sm text-[#746c64]">Loading saved pieces...</p>
       </main>
     );
@@ -167,7 +167,7 @@ export default function SavedPage() {
 
   if (!isAuthenticated) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-32 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
         <div className="border-b border-[#cec6bc] pb-10">
           <p className="text-[10px] uppercase tracking-[0.18em] text-[#8a8178]">
             Your collection
@@ -209,7 +209,7 @@ export default function SavedPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-32 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-8 md:pt-10 text-[#25211d]">
       <header className="border-b border-[#cec6bc] pb-10">
         <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>

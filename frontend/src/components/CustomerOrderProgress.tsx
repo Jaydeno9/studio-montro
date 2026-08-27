@@ -77,7 +77,7 @@ export default function CustomerOrderProgress({
             <div key={step.key} className="relative pb-5 sm:pb-0">
               <div className="flex items-center sm:block">
                 <div
-                  className={`relative z-10 flex h-7 w-7 shrink-0 items-center justify-center border text-[10px] ${
+                  className={`relative flex h-7 w-7 shrink-0 items-center justify-center border text-[10px] ${
                     complete
                       ? "border-[#25211d] bg-[#25211d] text-[#f4f0e9]"
                       : current

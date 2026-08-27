@@ -63,7 +63,7 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [allProducts, setAllProducts] = useState<ProductListItem[]>([]);
 
-  const [selectedImage, setSelectedImage] = useState<ProductImage | null>(null);
+  const [, setSelectedImage] = useState<ProductImage | null>(null);
   const [selectedColor, setSelectedColor] = useState<ProductColor | null>(null);
   const [quantity, setQuantity] = useState(1);
 
@@ -497,9 +497,7 @@ export default function ProductDetailPage() {
                         Math.min(product.stock_quantity, current + 1),
                       )
                     }
-                    disabled={
-                      quantity >= product.stock_quantity || cartLoading
-                    }
+                    disabled={quantity >= product.stock_quantity || cartLoading}
                     aria-label="Increase quantity"
                     className="flex h-full w-10 items-center justify-center text-lg font-light text-[#514b45] transition hover:bg-[#e9e2d9] disabled:cursor-not-allowed disabled:opacity-30"
                   >
@@ -947,9 +945,7 @@ export default function ProductDetailPage() {
                               <button
                                 key={color.id}
                                 type="button"
-                                onClick={() =>
-                                  setRecommendedColorId(color.id)
-                                }
+                                onClick={() => setRecommendedColorId(color.id)}
                                 className={`flex items-center gap-2 border px-3 py-2 text-xs transition ${
                                   active
                                     ? "border-[#25211d] text-[#25211d]"
@@ -974,8 +970,7 @@ export default function ProductDetailPage() {
                             void confirmRecommendedAdd(item);
                           }}
                           disabled={
-                            !recommendedColorId ||
-                            cartBusyIds.has(item.id)
+                            !recommendedColorId || cartBusyIds.has(item.id)
                           }
                           className="mt-4 flex w-full items-center justify-between bg-[#25211d] px-4 py-3 text-xs uppercase tracking-[0.11em] text-[#f4f0e9] transition hover:bg-[#39332d] disabled:cursor-wait disabled:opacity-40"
                         >
@@ -991,8 +986,7 @@ export default function ProductDetailPage() {
                       <button
                         type="button"
                         disabled={
-                          item.stock_quantity <= 0 ||
-                          cartBusyIds.has(item.id)
+                          item.stock_quantity <= 0 || cartBusyIds.has(item.id)
                         }
                         onClick={() => {
                           void handleRecommendedAdd(item);

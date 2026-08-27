@@ -40,7 +40,6 @@ class ProductUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     price: Optional[float] = Field(default=None, ge=0)
-    stock_quantity: Optional[int] = Field(default=None, ge=0)
     material: Optional[str] = None
     dimensions: Optional[str] = None
     status: Optional[Literal["active", "inactive"]] = None
@@ -647,7 +646,7 @@ def update_product_image(
     if not existing.data:
         raise HTTPException(status_code=404, detail="Image not found for this product")
 
-    update_data = {k: v for k, v in image.model_dump().items() if v is not None}
+    update_data = image.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -803,7 +802,7 @@ def update_product_color(
     if not existing.data:
         raise HTTPException(status_code=404, detail="Color not found for this product")
 
-    update_data = {k: v for k, v in color.model_dump().items() if v is not None}
+    update_data = color.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -918,11 +917,7 @@ def update_product(
             detail="Product not found"
         )
 
-    update_data = {
-        k: v
-        for k, v in product.model_dump().items()
-        if v is not None
-    }
+    update_data = product.model_dump(exclude_unset=True)
 
     if not update_data:
         raise HTTPException(
@@ -1307,7 +1302,7 @@ def update_address(address_id: str, address: AddressUpdate, current_user = Depen
     if not existing.data:
         raise HTTPException(status_code=404, detail="Address not found")
 
-    update_data = {k: v for k, v in address.model_dump().items() if v is not None}
+    update_data = address.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -1374,11 +1369,32 @@ def get_my_orders(current_user = Depends(get_current_user)):
     response = (
         supabase
         .table("orders")
-        .select("*, order_items(*), addresses(*), order_cancellation_requests(*)")
+        .select(
+            """
+            id,
+            status,
+            payment_status,
+            payment_proof_url,
+            refund_status,
+            total,
+            created_at,
+            order_items(
+                id,
+                product_name,
+                quantity
+            ),
+            order_cancellation_requests(
+                id,
+                status,
+                created_at
+            )
+            """
+        )
         .eq("user_id", current_user.id)
         .order("created_at", desc=True)
         .execute()
     )
+
     return response.data
 
 @app.post("/orders")
@@ -1390,15 +1406,80 @@ def create_order(order: OrderCreate, current_user = Depends(get_current_user)):
             "p_note": order.note,
             "p_payment_proof_url": None
         }).execute()
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    
+    except Exception as exc:
+        message = str(exc)
+
+        if "Cart is empty" in message:
+            raise HTTPException(
+                status_code=400,
+                detail="Your cart is empty"
+            )
+
+        if "Insufficient stock" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="One or more items no longer have enough stock. Please review your cart."
+            )
+
+        if "no longer available" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="One or more products are no longer available."
+            )
+
+        if "Selected color is no longer valid" in message:
+            raise HTTPException(
+                status_code=409,
+                detail="A selected product finish is no longer available."
+            )
+
+        if "Address not found" in message:
+            raise HTTPException(
+                status_code=400,
+                detail="Please select a valid delivery address."
+            )
+
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to place your order. Please review your cart and try again."
+        )
+        
     order_id = response.data
     
     full_order = (
         supabase
         .table("orders")
-        .select("*, order_items(*), addresses(*)")
+        .select(
+            """
+            id,
+            status,
+            payment_status,
+            payment_method,
+            payment_proof_url,
+            payment_proof_submitted_at,
+            subtotal,
+            total,
+            note,
+            created_at,
+            order_items(
+                id,
+                product_name,
+                unit_price,
+                quantity,
+                color_name
+            ),
+            addresses(
+                recipient_name,
+                phone,
+                address_line1,
+                address_line2,
+                city,
+                state,
+                postcode,
+                country
+            )
+            """
+        )
         .eq("id", order_id)
         .single()
         .execute()
@@ -1455,13 +1536,18 @@ def submit_payment_proof(
 
         raise HTTPException(
             status_code=400,
-            detail=f"Unable to submit payment proof: {message}"
+            detail="Unable to submit payment proof. Please try again or contact support."
         )
 
     response = (
         supabase
         .table("orders")
-        .select("*")
+        .select(
+            "id, status, payment_status, payment_method, payment_proof_url, "
+            "payment_proof_submitted_at, refund_status, refund_reference, "
+            "refunded_at, cancellation_reason, cancelled_at, subtotal, total, "
+            "note, created_at, updated_at"
+        )
         .eq("id", order_id)
         .eq("user_id", current_user.id)
         .single()
@@ -1485,7 +1571,66 @@ def get_my_order(
         supabase
         .table("orders")
         .select(
-            "*, order_items(*), addresses(*), order_status_history(*), order_cancellation_requests(*), order_refund_history(*)"
+            """
+            id,
+            status,
+            payment_status,
+            payment_method,
+            payment_proof_url,
+            payment_proof_submitted_at,
+            refund_status,
+            refund_reference,
+            refunded_at,
+            cancellation_reason,
+            cancelled_at,
+            subtotal,
+            total,
+            note,
+            created_at,
+            updated_at,
+            order_items(
+                id,
+                product_name,
+                unit_price,
+                quantity,
+                color_name
+            ),
+            addresses(
+                recipient_name,
+                phone,
+                address_line1,
+                address_line2,
+                city,
+                state,
+                postcode,
+                country
+            ),
+            order_status_history(
+                id,
+                order_id,
+                status,
+                changed_at
+            ),
+            order_cancellation_requests(
+                id,
+                order_id,
+                user_id,
+                status,
+                reason,
+                resolution_message,
+                reviewed_at,
+                created_at,
+                updated_at
+            ),
+            order_refund_history(
+                id,
+                order_id,
+                event,
+                amount,
+                reference,
+                created_at
+            )
+            """
         )
         .eq("id", order_id)
         .eq("user_id", current_user.id)
@@ -1545,7 +1690,7 @@ def verify_payment(
 
         raise HTTPException(
             status_code=400,
-            detail=f"Unable to verify payment: {message}"
+            detail="Unable to verify payment."
         )
 
     response = (
@@ -1660,7 +1805,7 @@ def update_order_status(
 
             raise HTTPException(
                 status_code=400,
-                detail=f"Unable to cancel order: {message}"
+                detail="Unable to cancel order."
             )
 
         cancelled_order = (
@@ -1720,7 +1865,7 @@ def update_order_status(
 
         raise HTTPException(
             status_code=400,
-            detail=f"Unable to update order status: {message}"
+            detail="Unable to update order status."
         )
 
     updated_order = (
@@ -1788,7 +1933,7 @@ def request_order_cancellation(
 
         raise HTTPException(
             status_code=400,
-            detail=f"Unable to request cancellation: {message}"
+            detail="Unable to submit the cancellation request."
         )
 
     request_id = response.data
@@ -1796,7 +1941,10 @@ def request_order_cancellation(
     request = (
         supabase
         .table("order_cancellation_requests")
-        .select("*")
+        .select(
+            "id, order_id, user_id, status, reason, "
+            "resolution_message, reviewed_at, created_at, updated_at"
+        )
         .eq("id", request_id)
         .eq("user_id", current_user.id)
         .single()
@@ -1847,7 +1995,7 @@ def get_order_history(
     response = (
         supabase
         .table("order_status_history")
-        .select("*")
+        .select("id, order_id, status, changed_at")
         .eq("order_id", order_id)
         .order("changed_at")
         .execute()
@@ -2304,7 +2452,7 @@ def resolve_order_cancellation_request(
 
         raise HTTPException(
             status_code=400,
-            detail=f"Unable to resolve cancellation request: {message}"
+            detail="Unable to resolve cancellation request."
         )
 
     refreshed = (
@@ -2377,7 +2525,7 @@ def complete_order_refund(
 
         raise HTTPException(
             status_code=400,
-            detail=f"Unable to complete refund: {message}"
+            detail="Unable to complete refund."
         )
 
     refreshed = (

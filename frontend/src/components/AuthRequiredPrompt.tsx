@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { withReturnTo } from "@/src/lib/authRedirect";
 
 export type AuthPromptDetail = {
   title: string;
@@ -17,9 +18,15 @@ export function requestAuthPrompt(detail: AuthPromptDetail) {
     return;
   }
 
+  const returnTo = `${window.location.pathname}${window.location.search}`;
+
   window.dispatchEvent(
     new CustomEvent<AuthPromptDetail>(EVENT_NAME, {
-      detail,
+      detail: {
+        ...detail,
+        loginHref: detail.loginHref ?? withReturnTo("/login", returnTo),
+        signupHref: detail.signupHref ?? withReturnTo("/signup", returnTo),
+      },
     }),
   );
 }
