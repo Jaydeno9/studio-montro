@@ -299,7 +299,7 @@ export default function AdminProductsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-5 pb-28 pt-28 text-[#25211d] md:px-8">
+    <main className="min-h-screen bg-[#f4f0e9] px-5 pb-28 pt-24 text-[#25211d] md:px-8 lg:pt-10">
       <header className="border-b border-[#cec6bc] pb-8">
         <p className="text-[10px] uppercase tracking-[0.16em] text-[#8a8178]">
           Catalogue

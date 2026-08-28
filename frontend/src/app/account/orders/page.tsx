@@ -13,6 +13,7 @@ type CancellationRequest = {
 
 type OrderItem = {
   id: string;
+  product_id?: string | null;
   product_name: string;
   quantity: number;
 };
@@ -35,10 +36,18 @@ type Order = {
   order_cancellation_requests?: CancellationRequest[];
 };
 
+type CatalogProduct = {
+  id: string;
+  name: string;
+  slug: string;
+  primary_image: string | null;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 export default function AccountOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
+  const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -77,6 +86,32 @@ export default function AccountOrdersPage() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCatalog() {
+      try {
+        const response = await fetch(`${API_URL}/products`);
+
+        if (!response.ok) return;
+
+        const data = (await response.json()) as CatalogProduct[];
+
+        if (!cancelled) {
+          setCatalog(data);
+        }
+      } catch (err) {
+        console.error("Unable to load order product images:", err);
+      }
+    }
+
+    void loadCatalog();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const activeOrders = useMemo(
     () =>
       orders.filter(
@@ -85,16 +120,38 @@ export default function AccountOrdersPage() {
     [orders],
   );
 
+  const catalogById = useMemo(
+    () => new Map(catalog.map((product) => [product.id, product])),
+    [catalog],
+  );
+
+  const catalogByName = useMemo(
+    () =>
+      new Map(
+        catalog.map((product) => [product.name.trim().toLowerCase(), product]),
+      ),
+    [catalog],
+  );
+
+  function resolveProduct(item: OrderItem) {
+    if (item.product_id) {
+      const product = catalogById.get(item.product_id);
+      if (product) return product;
+    }
+
+    return catalogByName.get(item.product_name.trim().toLowerCase()) ?? null;
+  }
+
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 text-[#25211d] md:pt-10">
         <p className="text-sm text-[#756d65]">Loading your orders...</p>
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 text-[#25211d] md:pt-10">
       <header className="border-b border-[#cec6bc] pb-10">
         <div className="flex flex-col gap-7 lg:flex-row lg:items-end lg:justify-between">
           <div>
@@ -105,9 +162,9 @@ export default function AccountOrdersPage() {
               ← My account
             </Link>
 
-            <p className="mt-4 text-4xl font-medium tracking-[-0.04em] md:text-6xl">
-              Your orders
-            </p>
+            <h1 className="mt-4 text-4xl font-medium tracking-[-0.04em] md:text-6xl">
+              <span className="text-[#4b1f26]">Your orders</span>
+            </h1>
 
             <p className="mt-5 max-w-xl text-sm leading-6 text-[#756d65]">
               Follow payment, preparation, delivery and any cancellation or
@@ -159,7 +216,7 @@ export default function AccountOrdersPage() {
             />
           </section>
 
-          <section className="divide-y divide-[#cec6bc]">
+          <section>
             {orders.map((order) => {
               const pendingCancellation =
                 order.order_cancellation_requests?.some(
@@ -168,70 +225,136 @@ export default function AccountOrdersPage() {
 
               const attention = getOrderLabel(order, pendingCancellation);
 
+              const pieceCount =
+                order.order_items?.reduce(
+                  (sum, item) => sum + item.quantity,
+                  0,
+                ) ?? 0;
+
+              const visibleItems = order.order_items.slice(0, 3);
+              const hiddenCount = Math.max(
+                order.order_items.length - visibleItems.length,
+                0,
+              );
+
               return (
-                <Link
+                <article
                   key={order.id}
-                  href={`/account/orders/${order.id}`}
-                  className="group grid gap-5 py-7 transition md:grid-cols-[180px_minmax(0,1fr)_180px_28px] md:items-center"
+                  className="border-b border-[#cec6bc] py-8"
                 >
-                  <div>
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-[#91877e]">
-                      Order
-                    </p>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.12em] text-[#91877e]">
+                        Order
+                      </p>
 
-                    <p className="mt-2 text-sm font-medium">
-                      #{order.id.slice(0, 8).toUpperCase()}
-                    </p>
+                      <p className="mt-2 text-base font-medium">
+                        #{order.id.slice(0, 8).toUpperCase()}
+                      </p>
 
-                    <p className="mt-1 text-xs text-[#817870]">
-                      {new Date(order.created_at).toLocaleDateString("en-MY", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </p>
-                  </div>
+                      <p className="mt-1 text-xs text-[#817870]">
+                        {new Date(order.created_at).toLocaleDateString(
+                          "en-MY",
+                          {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          },
+                        )}
+                      </p>
+                    </div>
 
-                  <div>
                     <span
-                      className={`inline-flex border px-3 py-1.5 text-[10px] uppercase tracking-[0.09em] ${getStatusTone(
+                      className={`w-fit border px-3 py-1.5 text-[10px] uppercase tracking-[0.09em] ${getStatusTone(
                         attention.type,
                       )}`}
                     >
                       {attention.label}
                     </span>
-
-                    <p className="mt-3 text-xs leading-5 text-[#756d65]">
-                      {attention.detail}
-                    </p>
-
-                    <p className="mt-2 text-xs text-[#91877e]">
-                      {order.order_items?.reduce(
-                        (sum, item) => sum + item.quantity,
-                        0,
-                      ) ?? 0}{" "}
-                      piece(s)
-                    </p>
                   </div>
 
-                  <div className="md:text-right">
-                    <p className="text-[10px] uppercase tracking-[0.12em] text-[#91877e]">
-                      Total
-                    </p>
+                  <div className="mt-6 grid gap-8 lg:grid-cols-[minmax(0,1fr)_190px]">
+                    <div>
+                      <div className="space-y-4">
+                        {visibleItems.map((item) => {
+                          const product = resolveProduct(item);
 
-                    <p className="mt-2 text-lg font-medium">
-                      RM{" "}
-                      {Number(order.total).toLocaleString("en-MY", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}
-                    </p>
+                          return (
+                            <div
+                              key={item.id}
+                              className="grid grid-cols-[64px_minmax(0,1fr)] items-center gap-4"
+                            >
+                              <div className="h-20 overflow-hidden bg-[#e5dfd6]">
+                                {product?.primary_image ? (
+                                  <img
+                                    src={product.primary_image}
+                                    alt={item.product_name}
+                                    className="h-full w-full object-cover"
+                                  />
+                                ) : (
+                                  <div className="flex h-full items-center justify-center px-2 text-center">
+                                    <span className="text-[8px] uppercase tracking-[0.12em] text-[#9a9188]">
+                                      Studio MONTRO
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-medium">
+                                  {item.product_name}
+                                </p>
+
+                                <p className="mt-1 text-xs text-[#817870]">
+                                  Qty {item.quantity}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {hiddenCount > 0 && (
+                        <p className="mt-4 text-xs text-[#817870]">
+                          + {hiddenCount} more item
+                          {hiddenCount === 1 ? "" : "s"}
+                        </p>
+                      )}
+
+                      <p className="mt-5 text-xs leading-5 text-[#756d65]">
+                        {attention.detail}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col justify-between border-t border-[#cec6bc] pt-5 lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0 lg:text-right">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-[#91877e]">
+                          Total
+                        </p>
+
+                        <p className="mt-2 text-xl font-medium">
+                          RM{" "}
+                          {Number(order.total).toLocaleString("en-MY", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}
+                        </p>
+
+                        <p className="mt-2 text-xs text-[#91877e]">
+                          {pieceCount} {pieceCount === 1 ? "piece" : "pieces"}
+                        </p>
+                      </div>
+
+                      <Link
+                        href={`/account/orders/${order.id}`}
+                        className="mt-6 inline-flex items-center gap-3 text-sm text-[#4b1f26] lg:justify-end"
+                      >
+                        View order
+                        <span>→</span>
+                      </Link>
+                    </div>
                   </div>
-
-                  <span className="text-xl transition group-hover:translate-x-1">
-                    →
-                  </span>
-                </Link>
+                </article>
               );
             })}
           </section>

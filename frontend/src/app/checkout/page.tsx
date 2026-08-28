@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation";
 import { authFetch } from "@/src/lib/authFetch";
 import { supabase } from "@/src/lib/supabase";
 import { useCart } from "@/src/hooks/useCart";
+import { FormField } from "@/src/components/form/FormField";
+import { FormMessage } from "@/src/components/form/FormMessage";
+import { TextInput } from "@/src/components/form/TextInput";
+import { TextareaField } from "@/src/components/form/TextareaField";
 
 type Address = {
   id: string;
@@ -340,15 +344,17 @@ export default function CheckoutPage() {
               </p>
             </div>
 
-            <label className="mt-6 block">
-              <span className="mb-2 block text-xs text-[#756d65]">Email</span>
-
-              <input
-                value={email}
-                readOnly
-                className="w-full border-b border-[#bdb4aa] bg-transparent py-3 text-sm outline-none"
-              />
-            </label>
+            <FormField id="checkout-email" label="Email" className="mt-6">
+              {(controlProps) => (
+                <TextInput
+                  {...controlProps}
+                  type="email"
+                  value={email}
+                  autoComplete="email"
+                  readOnly
+                />
+              )}
+            </FormField>
           </div>
 
           {/* DELIVERY */}
@@ -437,6 +443,7 @@ export default function CheckoutPage() {
                   value={phone}
                   onChange={setPhone}
                   autoComplete="tel"
+                  type="tel"
                 />
 
                 <div className="md:col-span-2">
@@ -478,17 +485,16 @@ export default function CheckoutPage() {
                   autoComplete="postal-code"
                 />
 
-                <label className="block">
-                  <span className="mb-2 block text-xs text-[#756d65]">
-                    Country
-                  </span>
-
-                  <input
-                    value="Malaysia"
-                    readOnly
-                    className="w-full border-b border-[#bdb4aa] bg-transparent py-3 text-sm outline-none"
-                  />
-                </label>
+                <FormField label="Country">
+                  {(controlProps) => (
+                    <TextInput
+                      {...controlProps}
+                      value="Malaysia"
+                      autoComplete="country-name"
+                      readOnly
+                    />
+                  )}
+                </FormField>
               </div>
             )}
           </div>
@@ -519,13 +525,18 @@ export default function CheckoutPage() {
               04 — Order note
             </p>
 
-            <textarea
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              rows={4}
-              placeholder="Delivery instructions or a note for the studio..."
-              className="mt-6 w-full resize-none border border-[#cec6bc] bg-transparent p-4 text-sm leading-6 outline-none placeholder:text-[#a39a91] focus:border-[#25211d]"
-            />
+            <FormField label="Note" className="mt-6">
+              {(controlProps) => (
+                <TextareaField
+                  {...controlProps}
+                  value={note}
+                  onChange={(event) => setNote(event.target.value)}
+                  rows={4}
+                  placeholder="Delivery instructions or a note for the studio..."
+                  className="resize-none"
+                />
+              )}
+            </FormField>
           </div>
         </section>
 
@@ -599,7 +610,7 @@ export default function CheckoutPage() {
 
             {error && (
               <div className="mb-5 border border-[#a97068] px-4 py-3">
-                <p className="text-sm leading-6 text-[#7f3932]">{error}</p>
+                <FormMessage className="mt-0">{error}</FormMessage>
               </div>
             )}
 
@@ -628,22 +639,25 @@ function CheckoutField({
   value,
   onChange,
   autoComplete,
+  type = "text",
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   autoComplete?: string;
+  type?: "text" | "tel";
 }) {
   return (
-    <label className="block">
-      <span className="mb-2 block text-xs text-[#756d65]">{label}</span>
-
-      <input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        autoComplete={autoComplete}
-        className="w-full border-b border-[#bdb4aa] bg-transparent py-3 text-sm outline-none transition focus:border-[#25211d]"
-      />
-    </label>
+    <FormField label={label}>
+      {(controlProps) => (
+        <TextInput
+          {...controlProps}
+          type={type}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          autoComplete={autoComplete}
+        />
+      )}
+    </FormField>
   );
 }

@@ -5,10 +5,11 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/src/lib/supabase";
 import { getSafeReturnTo, withReturnTo } from "@/src/lib/authRedirect";
-import {
-  getPasswordChecks,
-  isPasswordValid,
-} from "@/src/lib/passwordValidation";
+import { isPasswordValid } from "@/src/lib/passwordValidation";
+import { AuthMessage } from "@/src/components/auth/AuthMessage";
+import { AuthShell } from "@/src/components/auth/AuthShell";
+import { PasswordField } from "@/src/components/auth/PasswordField";
+import { PasswordRequirements } from "@/src/components/auth/PasswordRequirements";
 
 function ResetPasswordForm() {
   const router = useRouter();
@@ -21,7 +22,10 @@ function ResetPasswordForm() {
   const [confirmation, setConfirmation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const checks = getPasswordChecks(password);
+  const passwordError =
+    error === "Password must meet all four requirements." ? error : undefined;
+  const confirmationError =
+    error === "Passwords do not match." ? error : undefined;
 
   useEffect(() => {
     let active = true;
@@ -84,104 +88,53 @@ function ResetPasswordForm() {
 
   if (status === "checking")
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pt-24 text-[#25211d]">
-        <p className="text-sm text-[#746c64]">Checking reset link...</p>
-      </main>
+      <AuthShell headline="A secure return." description="We’re carefully checking your recovery link before you choose a new password.">
+        <section className="w-full" aria-live="polite">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[#857c73]">Account recovery</p>
+          <h1 className="mt-3 text-4xl font-medium tracking-[-0.04em] text-[#4b1f26]">Checking reset link...</h1>
+          <AuthMessage tone="neutral">This will only take a moment.</AuthMessage>
+        </section>
+      </AuthShell>
     );
   if (status === "invalid")
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pt-24 text-[#25211d]">
-        <h1 className="text-4xl font-medium tracking-[-0.04em]">
-          <span className="text-[#4b1f26]">
-            This reset link is invalid or has expired.
-          </span>
-        </h1>
-        <Link
-          href={withReturnTo("/forgot-password", returnTo)}
-          className="mt-8 inline-block text-sm underline underline-offset-4"
-        >
-          Request a new reset link
-        </Link>
-      </main>
+      <AuthShell headline="A secure return." description="Expired links keep your account protected. Request a fresh link to continue.">
+        <section className="w-full">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[#857c73]">Account recovery</p>
+          <h1 className="mt-3 text-4xl font-medium leading-[1.05] tracking-[-0.04em] text-[#4b1f26]">This reset link is invalid or has expired.</h1>
+          <Link href={withReturnTo("/forgot-password", returnTo)} className="mt-8 inline-block text-sm underline decoration-[#aaa097] underline-offset-4">Request a new reset link</Link>
+        </section>
+      </AuthShell>
     );
   if (status === "success")
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pt-24 text-[#25211d]">
-        <h1 className="text-4xl font-medium tracking-[-0.04em]">
-          <span className="text-[#4b1f26]">Password updated.</span>
-        </h1>
-        <p className="mt-5 text-sm text-[#746c64]">
-          Taking you back securely...
-        </p>
-      </main>
-    );
-
-  const items = [
-    ["8+ characters", checks.minLength],
-    ["Uppercase letter", checks.uppercase],
-    ["Lowercase letter", checks.lowercase],
-    ["Number", checks.number],
-  ] as const;
-  return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-24 text-[#25211d]">
-      <div className="mx-auto flex min-h-[70vh] max-w-[620px] items-center">
-        <section className="w-full">
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[#857c73]">
-            Studio MONTRO
-          </p>
-          <h1 className="mt-5 text-5xl font-medium tracking-[-0.045em]">
-            <span className="text-[#4b1f26]">Choose a new password.</span>
-          </h1>
-          <form onSubmit={handleSubmit} className="mt-10 max-w-[460px]">
-            <label className="block border-t border-[#cec6bc] py-6">
-              <span className="text-[11px] uppercase tracking-[0.14em] text-[#857c73]">
-                New password
-              </span>
-              <input
-                type="password"
-                required
-                autoComplete="new-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                className="mt-3 w-full bg-transparent text-base outline-none"
-              />
-            </label>
-            <ul className="grid grid-cols-2 gap-2 border-b border-[#cec6bc] pb-6 text-xs text-[#857c73]">
-              {items.map(([label, passed]) => (
-                <li
-                  key={label}
-                  className={passed ? "text-[#5f6757]" : undefined}
-                >
-                  {passed ? "✓" : "○"} {label}
-                </li>
-              ))}
-            </ul>
-            <label className="block border-b border-[#cec6bc] py-6">
-              <span className="text-[11px] uppercase tracking-[0.14em] text-[#857c73]">
-                Confirm password
-              </span>
-              <input
-                type="password"
-                required
-                autoComplete="new-password"
-                value={confirmation}
-                onChange={(event) => setConfirmation(event.target.value)}
-                className="mt-3 w-full bg-transparent text-base outline-none"
-              />
-            </label>
-            {error && <p className="mt-4 text-sm text-[#8b3a34]">{error}</p>}
-            <button
-              type="submit"
-              disabled={loading}
-              className="mt-7 flex w-full items-center justify-between bg-[#25211d] px-5 py-4 text-sm font-medium text-[#f4f0e9] disabled:cursor-wait disabled:opacity-50"
-            >
-              <span>{loading ? "Updating..." : "Update password"}</span>
-              <span>→</span>
-            </button>
-          </form>
+      <AuthShell headline="A secure return." description="Your account is ready for the spaces, objects and ideas you’ve collected.">
+        <section className="w-full" aria-live="polite">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[#857c73]">Account recovery</p>
+          <h1 className="mt-3 text-4xl font-medium tracking-[-0.04em] text-[#4b1f26]">Password updated.</h1>
+          <AuthMessage tone="success">Taking you back securely...</AuthMessage>
         </section>
-      </div>
-    </main>
+      </AuthShell>
+    );
+  return (
+    <AuthShell headline="A secure return." description="Choose a new password, then return to the pieces and spaces that inspired you.">
+      <section className="w-full">
+        <p className="text-[11px] uppercase tracking-[0.18em] text-[#857c73]">Account recovery</p>
+        <h1 className="mt-3 text-4xl font-medium tracking-[-0.04em] text-[#4b1f26]">Choose a new password.</h1>
+        <p className="mt-4 text-sm leading-7 text-[#746c64]">Use a password that meets each requirement below.</p>
+
+        <form onSubmit={handleSubmit} className="mt-8 space-y-5">
+          <PasswordField id="reset-password" label="New password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" placeholder="At least 8 characters" error={passwordError} variant="boxed">
+            <PasswordRequirements password={password} />
+          </PasswordField>
+          <PasswordField id="reset-confirm-password" label="Confirm password" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="new-password" placeholder="Repeat password" error={confirmationError} variant="boxed" />
+          {error && !passwordError && !confirmationError && <AuthMessage>{error}</AuthMessage>}
+          <button type="submit" disabled={loading} className="mt-7 flex min-h-12 w-full items-center justify-between bg-[#25211d] px-5 py-4 text-sm font-medium text-[#f4f0e9] transition hover:bg-[#39332d] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#4b1f26] disabled:cursor-wait disabled:opacity-50">
+            <span>{loading ? "Updating..." : "Update password"}</span><span aria-hidden="true">→</span>
+          </button>
+        </form>
+      </section>
+    </AuthShell>
   );
 }
 

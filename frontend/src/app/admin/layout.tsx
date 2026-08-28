@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { adminFetch } from "@/src/lib/adminFetch";
 import { supabase } from "@/src/lib/supabase";
 import { AdminUnsavedChangesProvider } from "@/src/context/AdminUnsavedChangesProvider";
+import { useAdminInactivityTimeout } from "@/src/hooks/useAdminInactivityTimeout";
 
 type AdminOrder = {
   status: string;
@@ -27,6 +28,16 @@ const NAV_ITEMS = [
     icon: OrdersIcon,
   },
   {
+    label: "Customers",
+    href: "/admin/customers",
+    icon: CustomersIcon,
+  },
+  {
+    label: "Categories",
+    href: "/admin/categories",
+    icon: CategoriesIcon,
+  },
+  {
     label: "Products",
     href: "/admin/products",
     icon: ProductsIcon,
@@ -44,8 +55,61 @@ export default function AdminLayout({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [reviewCount, setReviewCount] = useState(0);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [authorizationStatus, setAuthorizationStatus] = useState<
+    "checking" | "authorized" | "error"
+  >("checking");
 
   const isLoginPage = pathname === "/admin/login";
+
+  const checkAdminAccess = useCallback(async () => {
+    if (isLoginPage) {
+      return;
+    }
+
+    setAuthorizationStatus((current) =>
+      current === "authorized" ? current : "checking",
+    );
+
+    try {
+      const response = await adminFetch(`${API_URL}/admin/me`);
+      const data = await response.json().catch(() => null);
+
+      if (!response.ok || data?.is_admin !== true) {
+        throw new Error("ADMIN_CHECK_FAILED");
+      }
+
+      setAuthorizationStatus("authorized");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === "AUTH_REQUIRED" ||
+          error.message === "ADMIN_ACCESS_REVOKED")
+      ) {
+        return;
+      }
+
+      setAuthorizationStatus("error");
+    }
+  }, [isLoginPage]);
+
+  const handleSessionExpired = useCallback(async () => {
+    setAuthorizationStatus("checking");
+    setMobileOpen(false);
+    setReviewCount(0);
+
+    try {
+      await supabase.auth.signOut({ scope: "local" });
+    } finally {
+      router.replace("/admin/login?reason=session_expired");
+      router.refresh();
+    }
+  }, [router]);
+
+  useAdminInactivityTimeout({
+    enabled: !isLoginPage && authorizationStatus === "authorized",
+    pathname,
+    onExpire: handleSessionExpired,
+  });
 
   const loadReviewCount = useCallback(async () => {
     try {
@@ -77,7 +141,7 @@ export default function AdminLayout({
   }, []);
 
   useEffect(() => {
-    if (isLoginPage) {
+    if (isLoginPage || authorizationStatus !== "authorized") {
       return;
     }
 
@@ -88,7 +152,17 @@ export default function AdminLayout({
     return () => {
       window.clearTimeout(timer);
     };
-  }, [isLoginPage, loadReviewCount, pathname]);
+  }, [authorizationStatus, isLoginPage, loadReviewCount, pathname]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void checkAdminAccess();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [checkAdminAccess, pathname]);
 
   useEffect(() => {
     if (!mobileOpen) {
@@ -123,7 +197,7 @@ export default function AdminLayout({
 
     try {
       setLoggingOut(true);
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: "local" });
       router.replace("/admin/login");
       router.refresh();
     } finally {
@@ -133,6 +207,30 @@ export default function AdminLayout({
 
   if (isLoginPage) {
     return <>{children}</>;
+  }
+
+  if (authorizationStatus !== "authorized") {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-[#f4f0e9] px-6 text-[#25211d]">
+        <div className="text-center">
+          <p className="text-sm text-[#756d65]">
+            {authorizationStatus === "error"
+              ? "Unable to verify admin access."
+              : "Checking admin access..."}
+          </p>
+
+          {authorizationStatus === "error" && (
+            <button
+              type="button"
+              onClick={() => void checkAdminAccess()}
+              className="mt-5 border border-[#8f867d] px-4 py-2 text-sm"
+            >
+              Try again
+            </button>
+          )}
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -364,6 +462,37 @@ function ProductsIcon() {
     >
       <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z" />
       <path d="M4 7.5 12 12l8-4.5M12 12v9" />
+    </svg>
+  );
+}
+
+function CustomersIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="8" r="3" />
+      <path d="M5 20c.7-4 3-6 7-6s6.3 2 7 6" />
+    </svg>
+  );
+}
+
+function CategoriesIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      aria-hidden="true"
+    >
+      <path d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 15h6v4h-6z" />
     </svg>
   );
 }

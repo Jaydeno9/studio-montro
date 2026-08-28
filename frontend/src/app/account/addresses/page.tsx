@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { authFetch } from "@/src/lib/authFetch";
+import { FormField } from "@/src/components/form/FormField";
+import { TextInput } from "@/src/components/form/TextInput";
 
 type Address = {
   id: string;
@@ -447,106 +449,142 @@ export default function AccountAddressesPage() {
                 className="space-y-5 px-6 py-6 md:px-8 md:py-8"
               >
                 <div className="grid gap-5 md:grid-cols-2">
-                  <Field label="Label" hint="Home, Studio, Office...">
-                    <input
-                      value={form.label}
-                      onChange={(event) =>
-                        updateField("label", event.target.value)
-                      }
-                      placeholder="Home"
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="Label" hint="Home, Studio, Office..." variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        value={form.label}
+                        onChange={(event) =>
+                          updateField("label", event.target.value)
+                        }
+                        placeholder="Home"
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
 
-                  <Field label="Recipient name" required>
-                    <input
-                      value={form.recipient_name}
-                      onChange={(event) =>
-                        updateField("recipient_name", event.target.value)
-                      }
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="Recipient name" required variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        value={form.recipient_name}
+                        onChange={(event) =>
+                          updateField("recipient_name", event.target.value)
+                        }
+                        autoComplete="name"
+                        required
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
                 </div>
 
                 <div className="grid gap-5 md:grid-cols-2">
-                  <Field label="Phone" required>
-                    <input
-                      value={form.phone}
-                      onChange={(event) =>
-                        updateField("phone", event.target.value)
-                      }
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="Phone" required variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        type="tel"
+                        value={form.phone}
+                        onChange={(event) =>
+                          updateField("phone", event.target.value)
+                        }
+                        autoComplete="tel"
+                        required
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
 
-                  <Field label="Postcode" required>
-                    <input
-                      value={form.postcode}
-                      onChange={(event) =>
-                        updateField("postcode", event.target.value)
-                      }
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="Postcode" required variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        value={form.postcode}
+                        onChange={(event) =>
+                          updateField("postcode", event.target.value)
+                        }
+                        autoComplete="postal-code"
+                        required
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
                 </div>
 
-                <Field label="Address line 1" required>
-                  <input
-                    value={form.address_line1}
-                    onChange={(event) =>
-                      updateField("address_line1", event.target.value)
-                    }
-                    required
-                    className={inputClass}
-                  />
-                </Field>
+                <FormField label="Address line 1" required variant="account">
+                  {(controlProps) => (
+                    <TextInput
+                      {...controlProps}
+                      value={form.address_line1}
+                      onChange={(event) =>
+                        updateField("address_line1", event.target.value)
+                      }
+                      autoComplete="address-line1"
+                      required
+                      variant="account"
+                    />
+                  )}
+                </FormField>
 
-                <Field label="Address line 2">
-                  <input
-                    value={form.address_line2}
-                    onChange={(event) =>
-                      updateField("address_line2", event.target.value)
-                    }
-                    className={inputClass}
-                  />
-                </Field>
+                <FormField label="Address line 2" variant="account">
+                  {(controlProps) => (
+                    <TextInput
+                      {...controlProps}
+                      value={form.address_line2}
+                      onChange={(event) =>
+                        updateField("address_line2", event.target.value)
+                      }
+                      autoComplete="address-line2"
+                      variant="account"
+                    />
+                  )}
+                </FormField>
 
                 <div className="grid gap-5 md:grid-cols-3">
-                  <Field label="City" required>
-                    <input
-                      value={form.city}
-                      onChange={(event) =>
-                        updateField("city", event.target.value)
-                      }
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="City" required variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        value={form.city}
+                        onChange={(event) =>
+                          updateField("city", event.target.value)
+                        }
+                        autoComplete="address-level2"
+                        required
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
 
-                  <Field label="State">
-                    <input
-                      value={form.state}
-                      onChange={(event) =>
-                        updateField("state", event.target.value)
-                      }
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="State" variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        value={form.state}
+                        onChange={(event) =>
+                          updateField("state", event.target.value)
+                        }
+                        autoComplete="address-level1"
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
 
-                  <Field label="Country" required>
-                    <input
-                      value={form.country}
-                      onChange={(event) =>
-                        updateField("country", event.target.value)
-                      }
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                  <FormField label="Country" required variant="account">
+                    {(controlProps) => (
+                      <TextInput
+                        {...controlProps}
+                        value={form.country}
+                        onChange={(event) =>
+                          updateField("country", event.target.value)
+                        }
+                        autoComplete="country-name"
+                        required
+                        variant="account"
+                      />
+                    )}
+                  </FormField>
                 </div>
 
                 <label className="flex cursor-pointer items-start gap-3 border border-[#c9c0b6] bg-[#eee8df] px-4 py-4">
@@ -735,36 +773,6 @@ function AddressCard({
     </article>
   );
 }
-
-function Field({
-  label,
-  required = false,
-  hint,
-  children,
-}: {
-  label: string;
-  required?: boolean;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-2 block text-sm font-medium">
-        {label}
-        {required && <span className="ml-1 text-[#765149]">*</span>}
-      </span>
-
-      {children}
-
-      {hint && (
-        <span className="mt-2 block text-xs text-[#91877e]">{hint}</span>
-      )}
-    </label>
-  );
-}
-
-const inputClass =
-  "h-12 w-full border border-[#b8aea4] bg-[#f8f4ee] px-4 text-sm outline-none transition focus:border-[#5f6f59]";
 
 function formatAddressName(address: Address) {
   return address.label

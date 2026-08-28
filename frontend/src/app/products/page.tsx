@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+
 import { useSavedProducts } from "@/src/hooks/useSavedProducts";
 import { useCart } from "@/src/hooks/useCart";
 
@@ -33,18 +34,61 @@ type Product = {
   secondary_image: string | null;
   colors: ProductColor[];
   created_at: string;
+  units_sold: number;
 };
 
-type SortOption = "newest" | "price_asc" | "price_desc" | "name_asc";
+type SortOption = "newest" | "best_selling" | "price_asc" | "price_desc";
+
+type PricePreset =
+  | "all"
+  | "under_500"
+  | "500_1000"
+  | "1000_2000"
+  | "2000_plus"
+  | "custom";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 const SORT_LABELS: Record<SortOption, string> = {
   newest: "Newest",
+  best_selling: "Best selling",
   price_asc: "Price: Low to high",
   price_desc: "Price: High to low",
-  name_asc: "Name: A–Z",
 };
+
+const PRICE_PRESETS: Array<{
+  value: Exclude<PricePreset, "custom">;
+  label: string;
+  min?: string;
+  max?: string;
+}> = [
+  {
+    value: "all",
+    label: "All prices",
+  },
+  {
+    value: "under_500",
+    label: "Under RM 500",
+    max: "500",
+  },
+  {
+    value: "500_1000",
+    label: "RM 500 – 1,000",
+    min: "500",
+    max: "1000",
+  },
+  {
+    value: "1000_2000",
+    label: "RM 1,000 – 2,000",
+    min: "1000",
+    max: "2000",
+  },
+  {
+    value: "2000_plus",
+    label: "RM 2,000+",
+    min: "2000",
+  },
+];
 
 const ROOM_FILTERS: Record<
   string,
@@ -61,12 +105,14 @@ const ROOM_FILTERS: Record<
     fallbackHref: "/products?category=lighting",
     fallbackLabel: "Explore lighting",
   },
+
   outdoor: {
     label: "The Green Space",
     categories: ["lighting", "decor", "objects"],
     fallbackHref: "/products",
     fallbackLabel: "Explore all pieces",
   },
+
   "living-room": {
     label: "Living Room",
     categories: [
@@ -80,6 +126,7 @@ const ROOM_FILTERS: Record<
     fallbackHref: "/products",
     fallbackLabel: "Explore all pieces",
   },
+
   kitchen: {
     label: "Kitchen",
     categories: ["tables", "lighting", "decor", "objects"],
@@ -91,9 +138,9 @@ const ROOM_FILTERS: Record<
 function isSortOption(value: string | null): value is SortOption {
   return (
     value === "newest" ||
+    value === "best_selling" ||
     value === "price_asc" ||
-    value === "price_desc" ||
-    value === "name_asc"
+    value === "price_desc"
   );
 }
 
@@ -101,7 +148,7 @@ export default function ProductsPage() {
   return (
     <Suspense
       fallback={
-        <main className="min-h-screen bg-[#f4f0e9] px-8 py-24">
+        <main className="min-h-screen bg-[#f4f0e9] px-4 py-20 sm:px-6 md:px-8">
           <p className="text-sm text-[#746c64]">Loading shop...</p>
         </main>
       }
@@ -115,26 +162,38 @@ function ProductsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const sortMenuRef = useRef<HTMLDivElement | null>(null);
+
   const searchTerm = searchParams.get("search")?.trim() ?? "";
   const selectedCategory = searchParams.get("category")?.trim() || "all";
   const selectedRoom = searchParams.get("room")?.trim() ?? "";
+
   const roomFilter = selectedRoom ? ROOM_FILTERS[selectedRoom] : undefined;
 
   const sortParam = searchParams.get("sort");
+
   const sort: SortOption = isSortOption(sortParam) ? sortParam : "newest";
+
+  const inStockOnly = searchParams.get("stock") === "in";
+  const minPrice = searchParams.get("min_price") ?? "";
+  const maxPrice = searchParams.get("max_price") ?? "";
 
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [inStockOnly, setInStockOnly] = useState(false);
-  const [minPrice, setMinPrice] = useState("");
-  const [maxPrice, setMaxPrice] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  const [customPriceOpen, setCustomPriceOpen] = useState(
+    Boolean(minPrice || maxPrice),
+  );
+
+  const [sortOpen, setSortOpen] = useState(false);
 
   const [quickAddProductId, setQuickAddProductId] = useState<string | null>(
     null,
   );
+
   const [quickAddColorId, setQuickAddColorId] = useState<string | null>(null);
 
   const {
@@ -146,6 +205,18 @@ function ProductsPageContent() {
 
   const { busyIds: cartBusyIds, message: cartMessage, addItem } = useCart();
 
+  function replaceParams(mutate: (params: URLSearchParams) => void) {
+    const params = new URLSearchParams(searchParams.toString());
+
+    mutate(params);
+
+    const query = params.toString();
+
+    router.replace(query ? `/products?${query}` : "/products", {
+      scroll: false,
+    });
+  }
+
   function updateShopUrl({
     search,
     category,
@@ -155,39 +226,97 @@ function ProductsPageContent() {
     category?: string;
     nextSort?: SortOption;
   }) {
-    const params = new URLSearchParams(searchParams.toString());
+    replaceParams((params) => {
+      if (search !== undefined) {
+        const trimmed = search.trim();
 
-    if (search !== undefined) {
-      const trimmed = search.trim();
-
-      if (trimmed) {
-        params.set("search", trimmed);
-      } else {
-        params.delete("search");
+        if (trimmed) {
+          params.set("search", trimmed);
+        } else {
+          params.delete("search");
+        }
       }
-    }
 
-    if (category !== undefined) {
-      if (category && category !== "all") {
-        params.set("category", category);
-      } else {
-        params.delete("category");
+      if (category !== undefined) {
+        if (category && category !== "all") {
+          params.set("category", category);
+        } else {
+          params.delete("category");
+        }
       }
-    }
 
-    if (nextSort !== undefined) {
-      if (nextSort !== "newest") {
-        params.set("sort", nextSort);
-      } else {
-        params.delete("sort");
+      if (nextSort !== undefined) {
+        if (nextSort !== "newest") {
+          params.set("sort", nextSort);
+        } else {
+          params.delete("sort");
+        }
       }
-    }
-
-    const query = params.toString();
-
-    router.replace(query ? `/products?${query}` : "/products", {
-      scroll: false,
     });
+  }
+
+  function setAvailability(nextInStockOnly: boolean) {
+    replaceParams((params) => {
+      if (nextInStockOnly) {
+        params.set("stock", "in");
+      } else {
+        params.delete("stock");
+      }
+    });
+  }
+
+  function setPriceRange(minimum?: string, maximum?: string) {
+    replaceParams((params) => {
+      if (minimum) {
+        params.set("min_price", minimum);
+      } else {
+        params.delete("min_price");
+      }
+
+      if (maximum) {
+        params.set("max_price", maximum);
+      } else {
+        params.delete("max_price");
+      }
+    });
+  }
+
+  function updateMinimumPrice(value: string) {
+    replaceParams((params) => {
+      if (value) {
+        params.set("min_price", value);
+      } else {
+        params.delete("min_price");
+      }
+    });
+  }
+
+  function updateMaximumPrice(value: string) {
+    replaceParams((params) => {
+      if (value) {
+        params.set("max_price", value);
+      } else {
+        params.delete("max_price");
+      }
+    });
+  }
+
+  function clearFilterControls() {
+    replaceParams((params) => {
+      params.delete("stock");
+      params.delete("min_price");
+      params.delete("max_price");
+    });
+
+    setCustomPriceOpen(false);
+  }
+
+  function clearAllFilters() {
+    setFiltersOpen(false);
+    setCustomPriceOpen(false);
+    setSortOpen(false);
+
+    router.replace("/products");
   }
 
   useEffect(() => {
@@ -229,6 +358,23 @@ function ProductsPageContent() {
     };
   }, []);
 
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        sortMenuRef.current &&
+        !sortMenuRef.current.contains(event.target as Node)
+      ) {
+        setSortOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, []);
+
   const categories = useMemo(() => {
     const categoryMap = new Map<string, Category>();
 
@@ -240,6 +386,30 @@ function ProductsPageContent() {
 
     return Array.from(categoryMap.values());
   }, [products]);
+
+  const selectedPricePreset: PricePreset = useMemo(() => {
+    if (minPrice === "" && maxPrice === "") {
+      return "all";
+    }
+
+    if (minPrice === "" && maxPrice === "500") {
+      return "under_500";
+    }
+
+    if (minPrice === "500" && maxPrice === "1000") {
+      return "500_1000";
+    }
+
+    if (minPrice === "1000" && maxPrice === "2000") {
+      return "1000_2000";
+    }
+
+    if (minPrice === "2000" && maxPrice === "") {
+      return "2000_plus";
+    }
+
+    return "custom";
+  }, [minPrice, maxPrice]);
 
   const visibleProducts = useMemo(() => {
     let result = [...products];
@@ -302,12 +472,21 @@ function ProductsPageContent() {
 
     result.sort((a, b) => {
       switch (sort) {
+        case "best_selling":
+          if (b.units_sold !== a.units_sold) {
+            return b.units_sold - a.units_sold;
+          }
+
+          return (
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          );
+
         case "price_asc":
           return a.price - b.price;
+
         case "price_desc":
           return b.price - a.price;
-        case "name_asc":
-          return a.name.localeCompare(b.name);
+
         case "newest":
         default:
           return (
@@ -363,17 +542,15 @@ function ProductsPageContent() {
     }
   }
 
-  function clearAllFilters() {
-    setInStockOnly(false);
-    setMinPrice("");
-    setMaxPrice("");
-    setFiltersOpen(false);
-    router.replace("/products");
-  }
+  const hasPriceFilter = minPrice !== "" || maxPrice !== "";
+
+  const activeFilterCount = [inStockOnly, hasPriceFilter].filter(
+    Boolean,
+  ).length;
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 py-24">
+      <main className="min-h-screen bg-[#f4f0e9] px-4 py-20 sm:px-6 md:px-8">
         <p className="text-sm text-[#746c64]">Loading shop...</p>
       </main>
     );
@@ -381,37 +558,35 @@ function ProductsPageContent() {
 
   if (error) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 py-24">
+      <main className="min-h-screen bg-[#f4f0e9] px-4 py-20 sm:px-6 md:px-8">
         <p className="text-sm text-[#8b3a34]">{error}</p>
       </main>
     );
   }
 
-  const activeFilterCount = [
-    inStockOnly,
-    minPrice !== "",
-    maxPrice !== "",
-  ].filter(Boolean).length;
-
   return (
     <main className="min-h-screen bg-[#f4f0e9] text-[#25211d]">
-      <header className="px-8 pb-10 pt-8 md:pt-10">
-        <div className="border-b border-[#cec6bc] pb-7">
-          <div className="flex items-end justify-between gap-8">
-            <div>
-              <h1 className="text-5xl font-medium tracking-[-0.045em] md:text-7xl">
-                <span className="text-[#25211d]">Shop</span>
+      <header className="px-4 pb-7 pt-7 sm:px-6 sm:pb-9 md:px-8 md:pt-10">
+        <div className="border-b border-[#cec6bc] pb-6 md:pb-7">
+          <div className="flex items-end justify-between gap-5">
+            <div className="min-w-0">
+              <h1 className="text-4xl font-medium tracking-[-0.045em] sm:text-5xl md:text-7xl">
+                <span className="text-[#4b1f26]">Shop</span>
               </h1>
 
               {searchTerm && (
-                <div className="mt-5 flex flex-wrap items-center gap-3">
-                  <p className="text-sm text-[#756d65]">
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <p className="text-xs text-[#756d65] sm:text-sm">
                     Results for “{searchTerm}”
                   </p>
 
                   <button
                     type="button"
-                    onClick={() => updateShopUrl({ search: "" })}
+                    onClick={() =>
+                      updateShopUrl({
+                        search: "",
+                      })
+                    }
                     className="text-xs underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#25211d]"
                   >
                     Clear search
@@ -420,26 +595,18 @@ function ProductsPageContent() {
               )}
 
               {roomFilter && (
-                <div className="mt-5 flex flex-wrap items-center gap-3">
-                  <p className="text-sm text-[#756d65]">
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <p className="text-xs text-[#756d65] sm:text-sm">
                     Shop by room · {roomFilter.label}
                   </p>
 
                   <button
                     type="button"
-                    onClick={() => {
-                      const params = new URLSearchParams(
-                        searchParams.toString(),
-                      );
-                      params.delete("room");
-                      const query = params.toString();
-                      router.replace(
-                        query ? `/products?${query}` : "/products",
-                        {
-                          scroll: false,
-                        },
-                      );
-                    }}
+                    onClick={() =>
+                      replaceParams((params) => {
+                        params.delete("room");
+                      })
+                    }
                     className="text-xs underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#25211d]"
                   >
                     Clear room
@@ -448,7 +615,7 @@ function ProductsPageContent() {
               )}
             </div>
 
-            <p className="pb-1 text-xs uppercase tracking-[0.16em] text-[#827970]">
+            <p className="shrink-0 pb-1 text-[10px] uppercase tracking-[0.14em] text-[#827970] sm:text-xs">
               {visibleProducts.length}{" "}
               {visibleProducts.length === 1 ? "piece" : "pieces"}
             </p>
@@ -456,73 +623,105 @@ function ProductsPageContent() {
         </div>
       </header>
 
-      <section className="px-8">
-        <div className="flex flex-col gap-5 border-b border-[#cec6bc] pb-5 lg:flex-row lg:items-center lg:justify-between">
-          <nav className="flex gap-6 overflow-x-auto pb-1">
-            <button
-              type="button"
-              onClick={() => updateShopUrl({ category: "all" })}
-              className={`shrink-0 text-sm transition ${
-                selectedCategory === "all"
-                  ? "text-[#25211d]"
-                  : "text-[#8a8178] hover:text-[#25211d]"
-              }`}
+      <section className="px-4 sm:px-6 md:px-8">
+        <div className="flex items-center gap-5 border-b border-[#cec6bc]">
+          <nav className="flex min-w-0 flex-1 gap-5 overflow-x-auto py-5 pr-3 [scrollbar-width:none] sm:gap-6 md:gap-7 [&::-webkit-scrollbar]:hidden">
+            <CategoryButton
+              active={selectedCategory === "all"}
+              onClick={() =>
+                updateShopUrl({
+                  category: "all",
+                })
+              }
             >
               All
-            </button>
+            </CategoryButton>
 
             {categories.map((category) => (
-              <button
+              <CategoryButton
                 key={category.id}
-                type="button"
-                onClick={() => updateShopUrl({ category: category.slug })}
-                className={`shrink-0 text-sm transition ${
-                  selectedCategory === category.slug
-                    ? "text-[#25211d]"
-                    : "text-[#8a8178] hover:text-[#25211d]"
-                }`}
+                active={selectedCategory === category.slug}
+                onClick={() =>
+                  updateShopUrl({
+                    category: category.slug,
+                  })
+                }
               >
                 {category.name}
-              </button>
+              </CategoryButton>
             ))}
           </nav>
 
-          <div className="flex items-center gap-5">
+          <div className="flex shrink-0 items-center gap-3 sm:gap-5">
             <button
               type="button"
               onClick={() => setFiltersOpen((current) => !current)}
-              className="flex items-center gap-2 text-sm text-[#514b45] transition hover:text-black"
+              className="flex items-center gap-1.5 whitespace-nowrap py-5 text-xs transition hover:text-[#4b1f26] sm:text-sm"
             >
-              Filter
+              <span>Filter</span>
+
               {activeFilterCount > 0 && (
-                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-[#25211d] px-1 text-[10px] text-[#f4f0e9]">
-                  {activeFilterCount}
-                </span>
+                <span className="text-[#4b1f26]">({activeFilterCount})</span>
               )}
-              <span className="text-xs">{filtersOpen ? "−" : "+"}</span>
+
+              <span className="hidden text-[10px] text-[#8a8178] sm:inline">
+                {filtersOpen ? "−" : "+"}
+              </span>
             </button>
 
-            <div className="h-4 w-px bg-[#cec6bc]" />
+            <div className="hidden h-4 w-px bg-[#cec6bc] sm:block" />
 
-            <label className="flex items-center gap-2">
-              <span className="text-sm text-[#8a8178]">Sort</span>
-
-              <select
-                value={sort}
-                onChange={(event) =>
-                  updateShopUrl({
-                    nextSort: event.target.value as SortOption,
-                  })
-                }
-                className="cursor-pointer appearance-none bg-transparent pr-4 text-sm text-[#25211d] outline-none"
+            <div ref={sortMenuRef} className="relative">
+              <button
+                type="button"
+                aria-expanded={sortOpen}
+                onClick={() => setSortOpen((current) => !current)}
+                className="flex items-center gap-1.5 whitespace-nowrap py-5 text-xs sm:gap-2 sm:text-sm"
               >
-                {(Object.keys(SORT_LABELS) as SortOption[]).map((option) => (
-                  <option key={option} value={option}>
-                    {SORT_LABELS[option]}
-                  </option>
-                ))}
-              </select>
-            </label>
+                <span className="hidden text-[#8a8178] sm:inline">Sort by</span>
+
+                <span className="text-[#25211d]">{SORT_LABELS[sort]}</span>
+
+                <span
+                  className={`text-[9px] text-[#8a8178] transition ${
+                    sortOpen ? "rotate-180" : ""
+                  }`}
+                >
+                  ↓
+                </span>
+              </button>
+
+              {sortOpen && (
+                <div className="absolute right-0 top-full z-40 w-[210px] max-w-[calc(100vw-2rem)] border-y border-[#bfb6ac] bg-[#f4f0e9] py-2 shadow-[0_14px_35px_rgba(37,33,29,0.08)] sm:w-[230px]">
+                  {(Object.keys(SORT_LABELS) as SortOption[]).map((option) => {
+                    const active = sort === option;
+
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => {
+                          updateShopUrl({
+                            nextSort: option,
+                          });
+
+                          setSortOpen(false);
+                        }}
+                        className={`flex w-full items-center justify-between gap-5 px-4 py-3 text-left text-sm transition ${
+                          active
+                            ? "text-[#4b1f26]"
+                            : "text-[#625a53] hover:text-[#25211d]"
+                        }`}
+                      >
+                        <span>{SORT_LABELS[option]}</span>
+
+                        {active && <span className="text-xs">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
@@ -532,87 +731,130 @@ function ProductsPageContent() {
           }`}
         >
           <div className="overflow-hidden">
-            <div className="grid gap-10 border-b border-[#cec6bc] py-7 md:grid-cols-3">
-              <div>
-                <p className="mb-4 text-[11px] uppercase tracking-[0.14em] text-[#8a8178]">
-                  Availability
-                </p>
+            <div className="border-b border-[#cec6bc] py-7 sm:py-8">
+              <div className="grid gap-8 md:grid-cols-[0.8fr_1.5fr] md:gap-10 xl:grid-cols-[0.7fr_1.6fr]">
+                <div>
+                  <FilterHeading>Availability</FilterHeading>
 
-                <label className="flex cursor-pointer items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={inStockOnly}
-                    onChange={(event) => setInStockOnly(event.target.checked)}
-                    className="h-4 w-4 accent-[#25211d]"
-                  />
+                  <div className="mt-4 flex flex-wrap gap-x-6 gap-y-3">
+                    <FilterChoice
+                      active={!inStockOnly}
+                      onClick={() => setAvailability(false)}
+                    >
+                      All pieces
+                    </FilterChoice>
 
-                  <span className="text-sm text-[#514b45]">In stock only</span>
-                </label>
-              </div>
+                    <FilterChoice
+                      active={inStockOnly}
+                      onClick={() => setAvailability(true)}
+                    >
+                      In stock
+                    </FilterChoice>
+                  </div>
+                </div>
 
-              <div>
-                <p className="mb-4 text-[11px] uppercase tracking-[0.14em] text-[#8a8178]">
-                  Price
-                </p>
+                <div>
+                  <FilterHeading>Price</FilterHeading>
 
-                <div className="flex items-center gap-3">
-                  <label className="flex flex-1 items-center border-b border-[#bdb4aa] pb-2">
-                    <span className="mr-2 text-xs text-[#8a8178]">RM</span>
+                  <div className="mt-4 flex flex-wrap gap-x-5 gap-y-3 sm:gap-x-6">
+                    {PRICE_PRESETS.map((preset) => (
+                      <FilterChoice
+                        key={preset.value}
+                        active={selectedPricePreset === preset.value}
+                        onClick={() => {
+                          setCustomPriceOpen(false);
 
-                    <input
-                      type="number"
-                      min="0"
-                      value={minPrice}
-                      onChange={(event) => setMinPrice(event.target.value)}
-                      placeholder="Min"
-                      className="w-full bg-transparent text-sm text-[#25211d] outline-none placeholder:text-[#a49b92]"
-                    />
-                  </label>
+                          setPriceRange(preset.min, preset.max);
+                        }}
+                      >
+                        {preset.label}
+                      </FilterChoice>
+                    ))}
 
-                  <span className="text-[#a49b92]">—</span>
+                    <button
+                      type="button"
+                      onClick={() => setCustomPriceOpen((current) => !current)}
+                      className={`border-b pb-1 text-sm transition ${
+                        selectedPricePreset === "custom" || customPriceOpen
+                          ? "border-[#4b1f26] text-[#4b1f26]"
+                          : "border-transparent text-[#756d65] hover:text-[#25211d]"
+                      }`}
+                    >
+                      Custom range
+                    </button>
+                  </div>
 
-                  <label className="flex flex-1 items-center border-b border-[#bdb4aa] pb-2">
-                    <span className="mr-2 text-xs text-[#8a8178]">RM</span>
+                  {customPriceOpen && (
+                    <div className="mt-6 grid max-w-[460px] grid-cols-[1fr_auto_1fr] items-center gap-3">
+                      <div className="flex min-w-0 items-center border-b border-[#a99f95] pb-2">
+                        <span className="mr-2 text-[11px] text-[#8a8178] sm:text-xs">
+                          RM
+                        </span>
 
-                    <input
-                      type="number"
-                      min="0"
-                      value={maxPrice}
-                      onChange={(event) => setMaxPrice(event.target.value)}
-                      placeholder="Max"
-                      className="w-full bg-transparent text-sm text-[#25211d] outline-none placeholder:text-[#a49b92]"
-                    />
-                  </label>
+                        <input
+                          type="number"
+                          min="0"
+                          inputMode="decimal"
+                          value={minPrice}
+                          onChange={(event) =>
+                            updateMinimumPrice(event.target.value)
+                          }
+                          placeholder="Min"
+                          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#aaa198]"
+                        />
+                      </div>
+
+                      <span className="text-[#aaa198]">—</span>
+
+                      <div className="flex min-w-0 items-center border-b border-[#a99f95] pb-2">
+                        <span className="mr-2 text-[11px] text-[#8a8178] sm:text-xs">
+                          RM
+                        </span>
+
+                        <input
+                          type="number"
+                          min="0"
+                          inputMode="decimal"
+                          value={maxPrice}
+                          onChange={(event) =>
+                            updateMaximumPrice(event.target.value)
+                          }
+                          placeholder="Max"
+                          className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#aaa198]"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
-              <div className="flex items-end md:justify-end">
-                {activeFilterCount > 0 ? (
+              <div className="mt-8 flex items-center justify-end gap-4 border-t border-[#d7cfc6] pt-5">
+                {activeFilterCount > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
-                      setInStockOnly(false);
-                      setMinPrice("");
-                      setMaxPrice("");
-                    }}
+                    onClick={clearFilterControls}
                     className="text-xs text-[#756d65] underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#25211d]"
                   >
                     Clear filters
                   </button>
-                ) : (
-                  <p className="text-xs text-[#9a9188]">
-                    Refine by availability or price.
-                  </p>
                 )}
+
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(false)}
+                  className="bg-[#4b1f26] px-5 py-3 text-[11px] uppercase tracking-[0.12em] text-[#f4efe7] transition hover:bg-[#5a2730] sm:text-xs"
+                >
+                  Done
+                </button>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      <section className="px-8 pb-28 pt-8">
+      <section className="px-4 pb-24 pt-6 sm:px-6 sm:pt-8 md:px-8 md:pb-28">
         {visibleProducts.length === 0 ? (
-          <div className="py-28">
+          <div className="py-20 sm:py-28">
             {roomFilter ? (
               <>
                 <p className="text-[10px] uppercase tracking-[0.16em] text-[#8a8178]">
@@ -668,12 +910,12 @@ function ProductsPageContent() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 gap-x-4 gap-y-14 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-x-3 gap-y-9 sm:gap-x-4 sm:gap-y-12 md:grid-cols-3 lg:grid-cols-4 lg:gap-y-14">
             {visibleProducts.map((product) => {
               const isSaved = savedIds.has(product.id);
 
               return (
-                <article key={product.id} className="group">
+                <article key={product.id} className="group min-w-0">
                   <div className="relative">
                     <Link href={`/products/${product.slug}`} className="block">
                       <div className="relative aspect-[4/5] overflow-hidden bg-[#e5dfd6]">
@@ -699,7 +941,7 @@ function ProductsPageContent() {
                           </>
                         ) : (
                           <div className="flex h-full items-center justify-center">
-                            <span className="text-[11px] uppercase tracking-[0.16em] text-[#958c83]">
+                            <span className="text-[9px] uppercase tracking-[0.14em] text-[#958c83] sm:text-[11px]">
                               No image
                             </span>
                           </div>
@@ -716,11 +958,11 @@ function ProductsPageContent() {
                           ? `Remove ${product.name} from saved`
                           : `Save ${product.name}`
                       }
-                      className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-[#f4f0e9]/90 backdrop-blur-sm transition hover:scale-105 disabled:cursor-wait disabled:opacity-50"
+                      className="absolute right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-[#f4f0e9]/90 backdrop-blur-sm transition hover:scale-105 disabled:cursor-wait disabled:opacity-50 sm:right-3 sm:top-3 sm:h-9 sm:w-9"
                     >
                       <svg
                         viewBox="0 0 24 24"
-                        className="h-[18px] w-[18px]"
+                        className="h-4 w-4 sm:h-[18px] sm:w-[18px]"
                         fill={isSaved ? "currentColor" : "none"}
                         stroke="currentColor"
                         strokeWidth="1.5"
@@ -730,28 +972,28 @@ function ProductsPageContent() {
                     </button>
 
                     {product.stock_quantity <= 0 && (
-                      <span className="absolute bottom-3 left-3 bg-[#f4f0e9]/90 px-3 py-2 text-[10px] uppercase tracking-[0.14em] text-[#5e5750] backdrop-blur-sm">
+                      <span className="absolute bottom-2 left-2 bg-[#f4f0e9]/90 px-2 py-1.5 text-[8px] uppercase tracking-[0.12em] text-[#5e5750] backdrop-blur-sm sm:bottom-3 sm:left-3 sm:px-3 sm:py-2 sm:text-[10px]">
                         Sold out
                       </span>
                     )}
                   </div>
 
-                  <div className="pt-4">
+                  <div className="pt-3 sm:pt-4">
                     <Link href={`/products/${product.slug}`}>
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <p className="text-[15px] font-medium tracking-[-0.01em] text-[#29241f] transition group-hover:opacity-60">
+                      <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-medium tracking-[-0.01em] text-[#29241f] transition group-hover:opacity-60 sm:text-[15px]">
                             {product.name}
                           </p>
 
                           {product.category && (
-                            <p className="mt-1 text-xs text-[#8a8178]">
+                            <p className="mt-1 truncate text-[10px] text-[#8a8178] sm:text-xs">
                               {product.category.name}
                             </p>
                           )}
                         </div>
 
-                        <p className="shrink-0 text-sm text-[#29241f]">
+                        <p className="shrink-0 text-xs text-[#29241f] sm:text-sm">
                           RM{" "}
                           {product.price.toLocaleString("en-MY", {
                             maximumFractionDigits: 2,
@@ -761,30 +1003,36 @@ function ProductsPageContent() {
                     </Link>
 
                     {product.colors.length > 0 && (
-                      <div className="mt-3 flex items-center gap-1.5">
-                        {product.colors.map((color) => (
+                      <div className="mt-2.5 flex items-center gap-1 sm:mt-3 sm:gap-1.5">
+                        {product.colors.slice(0, 4).map((color) => (
                           <span
                             key={color.id}
                             title={color.color_name}
-                            className="h-3 w-3 rounded-full border border-black/10"
+                            className="h-2.5 w-2.5 rounded-full border border-black/10 sm:h-3 sm:w-3"
                             style={{
                               backgroundColor: color.color_hex,
                             }}
                           />
                         ))}
 
-                        <span className="ml-1 text-[10px] text-[#938a81]">
+                        {product.colors.length > 4 && (
+                          <span className="text-[9px] text-[#938a81]">
+                            +{product.colors.length - 4}
+                          </span>
+                        )}
+
+                        <span className="ml-0.5 hidden text-[10px] text-[#938a81] sm:inline">
                           {product.colors.length}{" "}
                           {product.colors.length === 1 ? "finish" : "finishes"}
                         </span>
                       </div>
                     )}
 
-                    <div className="mt-5 border-t border-[#cfc7bd] pt-3">
+                    <div className="mt-3 border-t border-[#cfc7bd] pt-2.5 sm:mt-5 sm:pt-3">
                       {quickAddProductId === product.id ? (
                         <div>
-                          <div className="flex items-center justify-between gap-4">
-                            <p className="text-[10px] uppercase tracking-[0.12em] text-[#847b73]">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-[9px] uppercase tracking-[0.11em] text-[#847b73] sm:text-[10px]">
                               Choose finish
                             </p>
 
@@ -794,14 +1042,14 @@ function ProductsPageContent() {
                                 setQuickAddProductId(null);
                                 setQuickAddColorId(null);
                               }}
-                              className="text-lg font-light leading-none text-[#6f675f] transition hover:text-[#25211d]"
+                              className="text-base font-light leading-none text-[#6f675f] transition hover:text-[#25211d] sm:text-lg"
                               aria-label="Close quick add"
                             >
                               ×
                             </button>
                           </div>
 
-                          <div className="mt-3 flex flex-wrap gap-2">
+                          <div className="mt-2.5 flex flex-wrap gap-1.5 sm:mt-3 sm:gap-2">
                             {product.colors.map((color) => {
                               const active = quickAddColorId === color.id;
 
@@ -810,19 +1058,22 @@ function ProductsPageContent() {
                                   key={color.id}
                                   type="button"
                                   onClick={() => setQuickAddColorId(color.id)}
-                                  className={`flex items-center gap-2 border px-3 py-2 text-xs transition ${
+                                  className={`flex items-center gap-1.5 border px-2 py-1.5 text-[9px] transition sm:gap-2 sm:px-3 sm:py-2 sm:text-xs ${
                                     active
                                       ? "border-[#25211d] text-[#25211d]"
                                       : "border-[#cfc7bd] text-[#6f675f] hover:border-[#8f857c]"
                                   }`}
                                 >
                                   <span
-                                    className="h-3 w-3 rounded-full border border-black/10"
+                                    className="h-2.5 w-2.5 rounded-full border border-black/10 sm:h-3 sm:w-3"
                                     style={{
                                       backgroundColor: color.color_hex,
                                     }}
                                   />
-                                  {color.color_name}
+
+                                  <span className="max-w-[70px] truncate sm:max-w-none">
+                                    {color.color_name}
+                                  </span>
                                 </button>
                               );
                             })}
@@ -834,14 +1085,17 @@ function ProductsPageContent() {
                             disabled={
                               !quickAddColorId || cartBusyIds.has(product.id)
                             }
-                            className="mt-4 flex w-full items-center justify-between bg-[#25211d] px-4 py-3 text-xs uppercase tracking-[0.11em] text-[#f4f0e9] transition hover:bg-[#39332d] disabled:cursor-wait disabled:opacity-40"
+                            className="mt-3 flex w-full items-center justify-between bg-[#25211d] px-3 py-2.5 text-[9px] uppercase tracking-[0.1em] text-[#f4f0e9] transition hover:bg-[#39332d] disabled:cursor-wait disabled:opacity-40 sm:mt-4 sm:px-4 sm:py-3 sm:text-xs"
                           >
                             <span>
                               {cartBusyIds.has(product.id)
                                 ? "Adding..."
-                                : "Add selected finish"}
+                                : "Add selected"}
                             </span>
-                            <span className="text-base font-light">+</span>
+
+                            <span className="text-sm font-light sm:text-base">
+                              +
+                            </span>
                           </button>
                         </div>
                       ) : (
@@ -852,7 +1106,7 @@ function ProductsPageContent() {
                             cartBusyIds.has(product.id)
                           }
                           onClick={() => void handleAddToCart(product)}
-                          className="flex w-full items-center justify-between text-left text-xs uppercase tracking-[0.12em] text-[#39332d] transition hover:opacity-50 disabled:cursor-not-allowed disabled:opacity-30"
+                          className="flex w-full items-center justify-between text-left text-[9px] uppercase tracking-[0.1em] text-[#39332d] transition hover:opacity-50 disabled:cursor-not-allowed disabled:opacity-30 sm:text-xs sm:tracking-[0.12em]"
                         >
                           <span>
                             {product.stock_quantity <= 0
@@ -862,7 +1116,7 @@ function ProductsPageContent() {
                                 : "Add to cart"}
                           </span>
 
-                          <span className="text-lg font-light leading-none">
+                          <span className="text-base font-light leading-none sm:text-lg">
                             +
                           </span>
                         </button>
@@ -877,7 +1131,7 @@ function ProductsPageContent() {
       </section>
 
       {(cartMessage || saveMessage) && (
-        <div className="fixed bottom-6 right-6 z-50 max-w-[320px] border border-[#cfc7bd] bg-[#f4f0e9]/95 px-5 py-4 shadow-[0_10px_35px_rgba(37,33,29,0.12)] backdrop-blur-md">
+        <div className="fixed bottom-4 left-4 right-4 z-50 border border-[#cfc7bd] bg-[#f4f0e9]/95 px-4 py-3 shadow-[0_10px_35px_rgba(37,33,29,0.12)] backdrop-blur-md sm:bottom-6 sm:left-auto sm:right-6 sm:max-w-[320px] sm:px-5 sm:py-4">
           <div className="flex items-start gap-3">
             <svg
               viewBox="0 0 24 24"
@@ -892,12 +1146,72 @@ function ProductsPageContent() {
               <path d="M12 16h.01" />
             </svg>
 
-            <p className="text-sm leading-6 text-[#514b45]">
+            <p className="text-xs leading-5 text-[#514b45] sm:text-sm sm:leading-6">
               {cartMessage || saveMessage}
             </p>
           </div>
         </div>
       )}
     </main>
+  );
+}
+
+function CategoryButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative shrink-0 whitespace-nowrap pb-2 text-xs transition sm:text-sm ${
+        active ? "text-[#25211d]" : "text-[#8a8178] hover:text-[#25211d]"
+      }`}
+    >
+      {children}
+
+      {active && (
+        <span className="absolute bottom-0 left-0 h-px w-5 bg-[#4b1f26] sm:w-6" />
+      )}
+    </button>
+  );
+}
+
+function FilterHeading({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[10px] uppercase tracking-[0.15em] text-[#8a8178]">
+      {children}
+    </p>
+  );
+}
+
+function FilterChoice({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`relative whitespace-nowrap pb-1 text-xs transition sm:text-sm ${
+        active ? "text-[#4b1f26]" : "text-[#756d65] hover:text-[#25211d]"
+      }`}
+    >
+      {children}
+
+      {active && (
+        <span className="absolute bottom-0 left-0 h-px w-full bg-[#4b1f26]" />
+      )}
+    </button>
   );
 }

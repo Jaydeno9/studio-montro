@@ -1,10 +1,11 @@
 from fastapi import FastAPI, HTTPException, Depends
 from typing import Optional, Literal
 from database import supabase
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from auth import get_current_user, get_current_user_optional
 import re
 from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime, timedelta, timezone
 
 
 # ---------- App 初始化（一定要在所有 @app.xxx 之前） ----------
@@ -133,6 +134,24 @@ class AddressUpdate(BaseModel):
 class CustomerProfileUpdate(BaseModel):
     full_name: Optional[str] = Field(default=None, max_length=120)
     phone: Optional[str] = Field(default=None, max_length=40)
+
+
+class CategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    slug: Optional[str] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
+
+
+class CategoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    description: Optional[str] = None
+    image_url: Optional[str] = None
     
 VALID_STATUSES = ["pending_payment", "processing", "ready_to_ship", "shipped", "delivered", "cancelled"]
 
@@ -186,23 +205,49 @@ def read_current_user(current_user = Depends(get_current_user)):
 # ---------- Categories ----------
 @app.get("/categories")
 def get_categories():
-    response = (
+    categories_response = (
         supabase
         .table("categories")
         .select("id, name, slug")
         .order("name")
         .execute()
     )
+    active_products_response = (
+        supabase
+        .table("products")
+        .select("category_id")
+        .eq("status", "active")
+        .execute()
+    )
 
-    return response.data
+    active_product_counts = {}
+    for product in active_products_response.data or []:
+        category_id = product.get("category_id")
+
+        if category_id:
+            active_product_counts[category_id] = (
+                active_product_counts.get(category_id, 0) + 1
+            )
+
+    return [
+        {
+            **category,
+            "active_product_count": active_product_counts.get(
+                category["id"],
+                0,
+            ),
+        }
+        for category in categories_response.data or []
+    ]
 
 # ---------- Products ----------
 VALID_SORTS = {
     "newest": ("created_at", True),
     "price_asc": ("price", False),
     "price_desc": ("price", True),
-    "name_asc": ("name", False),
+    "best_selling": None,
 }
+
 
 @app.get("/products")
 def get_products(
@@ -210,15 +255,21 @@ def get_products(
     search: Optional[str] = None,
     min_price: Optional[float] = None,
     max_price: Optional[float] = None,
-    sort: Optional[str] = None
+    sort: Optional[str] = None,
 ):
     if sort is not None and sort not in VALID_SORTS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid sort value. Must be one of {list(VALID_SORTS.keys())}"
+            detail=(
+                "Invalid sort value. "
+                f"Must be one of {list(VALID_SORTS.keys())}"
+            ),
         )
 
-    # 1. 查询基础商品
+    # ---------------------------------------------------------
+    # 1. Base active products
+    # ---------------------------------------------------------
+
     query = (
         supabase
         .table("products")
@@ -230,13 +281,27 @@ def get_products(
     )
 
     if category:
-        category_response = supabase.table("categories").select("id").eq("slug", category).execute()
+        category_response = (
+            supabase
+            .table("categories")
+            .select("id")
+            .eq("slug", category)
+            .execute()
+        )
+
         if not category_response.data:
             return []
-        query = query.eq("category_id", category_response.data[0]["id"])
+
+        query = query.eq(
+            "category_id",
+            category_response.data[0]["id"],
+        )
 
     if search:
-        query = query.ilike("name", f"%{search}%")
+        query = query.ilike(
+            "name",
+            f"%{search.strip()}%",
+        )
 
     if min_price is not None:
         query = query.gte("price", min_price)
@@ -245,22 +310,46 @@ def get_products(
         query = query.lte("price", max_price)
 
     sort_key = sort or "newest"
-    sort_field, sort_desc = VALID_SORTS[sort_key]
-    query = query.order(sort_field, desc=sort_desc)
+
+    # best_selling is calculated from order_items below,
+    # so use newest as a stable database ordering first.
+    if sort_key == "best_selling":
+        query = query.order("created_at", desc=True)
+    else:
+        sort_field, sort_desc = VALID_SORTS[sort_key]
+        query = query.order(
+            sort_field,
+            desc=sort_desc,
+        )
 
     products_response = query.execute()
-    products = products_response.data
+    products = products_response.data or []
 
     if not products:
         return []
 
     product_ids = [product["id"] for product in products]
 
-    # 2. 批量查 Categories
-    categories_response = supabase.table("categories").select("id, name, slug").execute()
-    categories_by_id = {cat["id"]: cat for cat in categories_response.data}
+    # ---------------------------------------------------------
+    # 2. Categories
+    # ---------------------------------------------------------
 
-    # 3. 批量查 Images
+    categories_response = (
+        supabase
+        .table("categories")
+        .select("id, name, slug")
+        .execute()
+    )
+
+    categories_by_id = {
+        category["id"]: category
+        for category in (categories_response.data or [])
+    }
+
+    # ---------------------------------------------------------
+    # 3. Images
+    # ---------------------------------------------------------
+
     images_response = (
         supabase
         .table("product_images")
@@ -271,42 +360,126 @@ def get_products(
     )
 
     images_by_product = {}
-    for image in images_response.data:
-        p_id = image["product_id"]
-        if p_id not in images_by_product:
-            images_by_product[p_id] = []
-        images_by_product[p_id].append(image)
 
-    # 4. 批量查 Colors
+    for image in images_response.data or []:
+        product_id = image["product_id"]
+
+        if product_id not in images_by_product:
+            images_by_product[product_id] = []
+
+        images_by_product[product_id].append(image)
+
+    # ---------------------------------------------------------
+    # 4. Colors
+    # ---------------------------------------------------------
+
     colors_response = (
         supabase
         .table("product_colors")
-        .select("id, product_id, color_name, color_hex")
+        .select(
+            "id, product_id, color_name, color_hex"
+        )
         .in_("product_id", product_ids)
         .execute()
     )
 
     colors_by_product = {}
-    for color in colors_response.data:
-        p_id = color["product_id"]
-        if p_id not in colors_by_product:
-            colors_by_product[p_id] = []
-        colors_by_product[p_id].append({
+
+    for color in colors_response.data or []:
+        product_id = color["product_id"]
+
+        if product_id not in colors_by_product:
+            colors_by_product[product_id] = []
+
+        colors_by_product[product_id].append({
             "id": color["id"],
             "color_name": color["color_name"],
             "color_hex": color["color_hex"],
         })
 
-    # 5. 组装结果
+    # ---------------------------------------------------------
+    # 5. Real sales totals
+    #
+    # Only:
+    # - payment verified
+    # - order not cancelled
+    #
+    # count as sales.
+    # ---------------------------------------------------------
+
+    units_sold_by_product = {
+        product_id: 0
+        for product_id in product_ids
+    }
+
+    valid_orders_response = (
+        supabase
+        .table("orders")
+        .select("id")
+        .eq("payment_status", "verified")
+        .neq("status", "cancelled")
+        .execute()
+    )
+
+    valid_order_ids = [
+        order["id"]
+        for order in (valid_orders_response.data or [])
+    ]
+
+    if valid_order_ids:
+        sold_items_response = (
+            supabase
+            .table("order_items")
+            .select(
+                "product_id, quantity"
+            )
+            .in_("order_id", valid_order_ids)
+            .in_("product_id", product_ids)
+            .execute()
+        )
+
+        for item in sold_items_response.data or []:
+            product_id = item.get("product_id")
+
+            if not product_id:
+                continue
+
+            if product_id not in units_sold_by_product:
+                continue
+
+            units_sold_by_product[product_id] += int(
+                item.get("quantity") or 0
+            )
+
+    # ---------------------------------------------------------
+    # 6. Build customer-facing product response
+    # ---------------------------------------------------------
+
     result = []
+
     for product in products:
-        p_id = product["id"]
-        product_images = images_by_product.get(p_id, [])
+        product_id = product["id"]
 
-        primary_image = product_images[0]["image_url"] if len(product_images) > 0 else None
-        secondary_image = product_images[1]["image_url"] if len(product_images) > 1 else None
+        product_images = images_by_product.get(
+            product_id,
+            [],
+        )
 
-        category_data = categories_by_id.get(product.get("category_id"))
+        primary_image = (
+            product_images[0]["image_url"]
+            if len(product_images) > 0
+            else None
+        )
+
+        secondary_image = (
+            product_images[1]["image_url"]
+            if len(product_images) > 1
+            else None
+        )
+
+        category_data = categories_by_id.get(
+            product.get("category_id")
+        )
 
         result.append({
             "id": product["id"],
@@ -321,9 +494,32 @@ def get_products(
             "category": category_data,
             "primary_image": primary_image,
             "secondary_image": secondary_image,
-            "colors": colors_by_product.get(p_id, []),
+            "colors": colors_by_product.get(
+                product_id,
+                [],
+            ),
             "created_at": product["created_at"],
+
+            # Real historical sales quantity.
+            "units_sold": units_sold_by_product.get(
+                product_id,
+                0,
+            ),
         })
+
+    # ---------------------------------------------------------
+    # 7. Best selling needs application-level sorting because
+    # units_sold is calculated from order_items, not products.
+    # ---------------------------------------------------------
+
+    if sort_key == "best_selling":
+        result.sort(
+            key=lambda product: (
+                product["units_sold"],
+                product["created_at"],
+            ),
+            reverse=True,
+        )
 
     return result
 
@@ -2003,6 +2199,472 @@ def get_order_history(
 
     return response.data
 
+@app.get("/admin/me")
+def get_admin_identity(current_user=Depends(get_current_user)):
+    require_admin(current_user)
+
+    return {
+        "user_id": current_user.id,
+        "is_admin": True,
+    }
+
+
+def get_admin_customer_email(user_id: str):
+    if not user_id:
+        return None
+
+    try:
+        response = supabase.auth.admin.get_user_by_id(user_id)
+        user = response.user
+        return user.email if user else None
+    except Exception:
+        return None
+
+
+def get_admin_customer_email_map(user_ids):
+    remaining_user_ids = {str(user_id) for user_id in user_ids if user_id}
+    email_by_user_id = {}
+    page = 1
+    per_page = 1000
+
+    try:
+        while remaining_user_ids:
+            users = supabase.auth.admin.list_users(
+                page=page,
+                per_page=per_page,
+            )
+
+            if not users:
+                break
+
+            for user in users:
+                user_id = str(user.id)
+                if user_id in remaining_user_ids:
+                    email_by_user_id[user_id] = user.email
+                    remaining_user_ids.remove(user_id)
+
+            if len(users) < per_page:
+                break
+
+            page += 1
+    except Exception:
+        # Email is supplementary admin-facing data. A failed Auth lookup must
+        # not prevent customer profiles and order metrics from loading.
+        pass
+
+    return email_by_user_id
+
+
+@app.get("/admin/customers")
+def get_admin_customers(current_user=Depends(get_current_user)):
+    require_admin(current_user)
+
+    profiles_response = (
+        supabase
+        .table("customer_profiles")
+        .select("id, user_id, full_name, phone, created_at")
+        .eq("is_admin", False)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    profiles = profiles_response.data or []
+
+    if not profiles:
+        return []
+
+    customer_ids = [profile["id"] for profile in profiles]
+    orders_response = (
+        supabase
+        .table("orders")
+        .select("customer_id, total, status, payment_status, created_at")
+        .in_("customer_id", customer_ids)
+        .order("created_at", desc=True)
+        .execute()
+    )
+
+    metrics_by_customer = {
+        customer_id: {
+            "order_count": 0,
+            "total_spent": 0.0,
+            "last_order_at": None,
+        }
+        for customer_id in customer_ids
+    }
+
+    for order in orders_response.data or []:
+        customer_id = order.get("customer_id")
+        metrics = metrics_by_customer.get(customer_id)
+        if not metrics:
+            continue
+
+        if metrics["last_order_at"] is None:
+            metrics["last_order_at"] = order.get("created_at")
+
+        if (
+            order.get("payment_status") == "verified"
+            and order.get("status") != "cancelled"
+        ):
+            metrics["order_count"] += 1
+            metrics["total_spent"] += float(order.get("total") or 0)
+
+    email_by_user_id = get_admin_customer_email_map(
+        profile.get("user_id") for profile in profiles
+    )
+
+    return [
+        {
+            "customer_id": profile["id"],
+            "full_name": profile.get("full_name"),
+            "email": email_by_user_id.get(str(profile.get("user_id"))),
+            "phone": profile.get("phone"),
+            "joined_at": profile["created_at"],
+            "order_count": metrics_by_customer[profile["id"]]["order_count"],
+            "total_spent": round(
+                metrics_by_customer[profile["id"]]["total_spent"],
+                2,
+            ),
+            "last_order_at": metrics_by_customer[profile["id"]]["last_order_at"],
+        }
+        for profile in profiles
+    ]
+
+
+@app.get("/admin/customers/{customer_id}")
+def get_admin_customer_detail(
+    customer_id: str,
+    current_user=Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    profile_response = (
+        supabase
+        .table("customer_profiles")
+        .select("id, user_id, full_name, phone, created_at, is_admin")
+        .eq("id", customer_id)
+        .eq("is_admin", False)
+        .execute()
+    )
+
+    if not profile_response.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
+
+    profile = profile_response.data[0]
+    orders_response = (
+        supabase
+        .table("orders")
+        .select(
+            "id, created_at, status, payment_status, total, refund_status"
+        )
+        .eq("customer_id", profile["id"])
+        .order("created_at", desc=True)
+        .execute()
+    )
+    orders = orders_response.data or []
+
+    addresses_response = (
+        supabase
+        .table("addresses")
+        .select(
+            "recipient_name, phone, address_line1, address_line2, city, "
+            "state, postcode, country, is_default"
+        )
+        .eq("customer_id", profile["id"])
+        .order("is_default", desc=True)
+        .order("created_at", desc=False)
+        .execute()
+    )
+
+    valid_orders = [
+        order
+        for order in orders
+        if order.get("payment_status") == "verified"
+        and order.get("status") != "cancelled"
+    ]
+
+    return {
+        "customer": {
+            "customer_id": profile["id"],
+            "full_name": profile.get("full_name"),
+            "email": get_admin_customer_email(profile.get("user_id")),
+            "phone": profile.get("phone"),
+            "joined_at": profile["created_at"],
+        },
+        "summary": {
+            "order_count": len(valid_orders),
+            "total_spent": round(
+                sum(float(order.get("total") or 0) for order in valid_orders),
+                2,
+            ),
+            "last_order_at": orders[0].get("created_at") if orders else None,
+        },
+        "orders": [
+            {
+                "id": order["id"],
+                "created_at": order["created_at"],
+                "status": order["status"],
+                "payment_status": order["payment_status"],
+                "total": float(order.get("total") or 0),
+                "refund_status": order.get("refund_status"),
+            }
+            for order in orders
+        ],
+        "addresses": addresses_response.data or [],
+    }
+
+
+def generate_category_slug(name: str):
+    slug = re.sub(r"[^a-z0-9\s-]", "", name.lower().strip())
+    slug = re.sub(r"\s+", "-", slug)
+    return re.sub(r"-+", "-", slug).strip("-") or None
+
+
+def normalize_category_data(data, generate_slug=False):
+    normalized = {}
+
+    if "name" in data:
+        name = data["name"]
+        if name is None or not name.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Category name is required",
+            )
+        normalized["name"] = name.strip()
+
+    for field_name in ("slug", "description", "image_url"):
+        if field_name not in data:
+            continue
+
+        value = data[field_name]
+        normalized[field_name] = value.strip() or None if value else None
+
+    if generate_slug and normalized.get("slug") is None:
+        normalized["slug"] = generate_category_slug(normalized["name"])
+
+    return normalized
+
+
+def ensure_category_is_unique(name: str, slug: Optional[str], exclude_id=None):
+    response = (
+        supabase
+        .table("categories")
+        .select("id, name, slug")
+        .execute()
+    )
+
+    normalized_name = name.casefold()
+    normalized_slug = slug.casefold() if slug else None
+
+    for category in response.data or []:
+        if exclude_id and category["id"] == exclude_id:
+            continue
+
+        existing_name = (category.get("name") or "").strip().casefold()
+        existing_slug = (category.get("slug") or "").strip().casefold()
+
+        if existing_name == normalized_name:
+            raise HTTPException(
+                status_code=409,
+                detail="A category with this name already exists",
+            )
+
+        if normalized_slug and existing_slug == normalized_slug:
+            raise HTTPException(
+                status_code=409,
+                detail="A category with this slug already exists",
+            )
+
+
+def get_category_product_count(category_id: str):
+    response = (
+        supabase
+        .table("products")
+        .select("id")
+        .eq("category_id", category_id)
+        .execute()
+    )
+    return len(response.data or [])
+
+
+def handle_category_write_error(error):
+    message = str(error).lower()
+    if "23505" in message or "duplicate key" in message:
+        raise HTTPException(
+            status_code=409,
+            detail="A category with this name already exists",
+        )
+
+    raise HTTPException(
+        status_code=400,
+        detail="Unable to save category",
+    )
+
+
+@app.get("/admin/categories")
+def get_admin_categories(current_user=Depends(get_current_user)):
+    require_admin(current_user)
+
+    categories_response = (
+        supabase
+        .table("categories")
+        .select("id, name, slug, description, image_url, created_at")
+        .order("name")
+        .execute()
+    )
+    products_response = (
+        supabase
+        .table("products")
+        .select("category_id")
+        .execute()
+    )
+
+    product_counts = {}
+    for product in products_response.data or []:
+        category_id = product.get("category_id")
+        if category_id:
+            product_counts[category_id] = product_counts.get(category_id, 0) + 1
+
+    return [
+        {
+            **category,
+            "product_count": product_counts.get(category["id"], 0),
+        }
+        for category in categories_response.data or []
+    ]
+
+
+@app.post("/admin/categories")
+def create_admin_category(
+    category: CategoryCreate,
+    current_user=Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    category_data = normalize_category_data(
+        category.model_dump(),
+        generate_slug=True,
+    )
+    ensure_category_is_unique(
+        category_data["name"],
+        category_data.get("slug"),
+    )
+
+    try:
+        response = (
+            supabase
+            .table("categories")
+            .insert(category_data)
+            .execute()
+        )
+    except Exception as error:
+        handle_category_write_error(error)
+
+    return {
+        **response.data[0],
+        "product_count": 0,
+    }
+
+
+@app.patch("/admin/categories/{category_id}")
+def update_admin_category(
+    category_id: str,
+    category: CategoryUpdate,
+    current_user=Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    existing_response = (
+        supabase
+        .table("categories")
+        .select("id, name, slug, description, image_url, created_at")
+        .eq("id", category_id)
+        .execute()
+    )
+    if not existing_response.data:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    update_data = normalize_category_data(
+        category.model_dump(exclude_unset=True)
+    )
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    existing = existing_response.data[0]
+    effective_name = update_data.get("name", existing["name"])
+    effective_slug = update_data.get("slug", existing.get("slug"))
+    ensure_category_is_unique(
+        effective_name,
+        effective_slug,
+        exclude_id=category_id,
+    )
+
+    try:
+        response = (
+            supabase
+            .table("categories")
+            .update(update_data)
+            .eq("id", category_id)
+            .execute()
+        )
+    except Exception as error:
+        handle_category_write_error(error)
+
+    return {
+        **response.data[0],
+        "product_count": get_category_product_count(category_id),
+    }
+
+
+@app.delete("/admin/categories/{category_id}")
+def delete_admin_category(
+    category_id: str,
+    current_user=Depends(get_current_user),
+):
+    require_admin(current_user)
+
+    existing_response = (
+        supabase
+        .table("categories")
+        .select("id")
+        .eq("id", category_id)
+        .execute()
+    )
+    if not existing_response.data:
+        raise HTTPException(status_code=404, detail="Category not found")
+
+    product_count = get_category_product_count(category_id)
+    if product_count > 0:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This category is used by {product_count} "
+                f"product{'s' if product_count != 1 else ''}. "
+                "Reassign those products before deleting it."
+            ),
+        )
+
+    try:
+        supabase.table("categories").delete().eq("id", category_id).execute()
+    except Exception as error:
+        message = str(error).lower()
+        if "23503" in message or "foreign key" in message:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This category is still used by products. "
+                    "Reassign those products before deleting it."
+                ),
+            )
+        raise HTTPException(status_code=400, detail="Unable to delete category")
+
+    return {
+        "message": "Category deleted",
+        "category_id": category_id,
+    }
+
+
 @app.get("/admin/products")
 def get_admin_products(
     current_user=Depends(get_current_user)
@@ -2112,6 +2774,198 @@ def create_product_inventory_adjustment(
         return response.data[0]
 
     return response.data
+
+
+@app.get("/admin/dashboard")
+def get_admin_dashboard(current_user=Depends(get_current_user)):
+    require_admin(current_user)
+
+    now = datetime.now(timezone.utc)
+    period_start = datetime.combine(
+        now.date() - timedelta(days=29),
+        datetime.min.time(),
+        tzinfo=timezone.utc,
+    )
+    period_start_iso = period_start.isoformat()
+
+    sales_response = (
+        supabase
+        .table("orders")
+        .select("id, total, created_at")
+        .eq("payment_status", "verified")
+        .neq("status", "cancelled")
+        .gte("created_at", period_start_iso)
+        .order("created_at", desc=False)
+        .execute()
+    )
+    sales_orders = sales_response.data or []
+    sales_order_ids = [order["id"] for order in sales_orders]
+    revenue = sum(float(order.get("total") or 0) for order in sales_orders)
+    order_count = len(sales_orders)
+
+    trend_by_date = {}
+    for day_offset in range(30):
+        day = (period_start.date() + timedelta(days=day_offset)).isoformat()
+        trend_by_date[day] = {"date": day, "revenue": 0.0, "orders": 0}
+
+    for order in sales_orders:
+        day = order["created_at"][:10]
+        if day not in trend_by_date:
+            continue
+        trend_by_date[day]["revenue"] += float(order.get("total") or 0)
+        trend_by_date[day]["orders"] += 1
+
+    product_sales = {}
+    if sales_order_ids:
+        items_response = (
+            supabase
+            .table("order_items")
+            .select("product_id, product_name, unit_price, quantity")
+            .in_("order_id", sales_order_ids)
+            .execute()
+        )
+
+        for item in items_response.data or []:
+            product_id = item.get("product_id")
+            product_name = item.get("product_name") or "Unknown product"
+            key = product_id or f"name:{product_name}"
+            quantity = int(item.get("quantity") or 0)
+            item_revenue = float(item.get("unit_price") or 0) * quantity
+
+            if key not in product_sales:
+                product_sales[key] = {
+                    "product_id": product_id,
+                    "product_name": product_name,
+                    "units_sold": 0,
+                    "revenue": 0.0,
+                    "image_url": None,
+                }
+
+            product_sales[key]["units_sold"] += quantity
+            product_sales[key]["revenue"] += item_revenue
+
+    top_products = sorted(
+        product_sales.values(),
+        key=lambda product: (product["units_sold"], product["revenue"]),
+        reverse=True,
+    )[:5]
+
+    top_product_ids = [
+        product["product_id"]
+        for product in top_products
+        if product["product_id"]
+    ]
+    if top_product_ids:
+        images_response = (
+            supabase
+            .table("product_images")
+            .select("product_id, image_url, sort_order")
+            .in_("product_id", top_product_ids)
+            .order("sort_order", desc=False)
+            .execute()
+        )
+        image_by_product = {}
+        for image in images_response.data or []:
+            image_by_product.setdefault(image["product_id"], image["image_url"])
+
+        for product in top_products:
+            product["image_url"] = image_by_product.get(product["product_id"])
+
+    for product in top_products:
+        product["revenue"] = round(product["revenue"], 2)
+
+    recent_orders_response = (
+        supabase
+        .table("orders")
+        .select(
+            "id, total, status, payment_status, created_at, "
+            "customer_profiles(full_name)"
+        )
+        .order("created_at", desc=True)
+        .limit(8)
+        .execute()
+    )
+    recent_orders = []
+    for order in recent_orders_response.data or []:
+        profile = order.get("customer_profiles")
+        if isinstance(profile, list):
+            profile = profile[0] if profile else None
+
+        recent_orders.append({
+            "id": order["id"],
+            "customer": (profile or {}).get("full_name") or "Customer",
+            "total": float(order.get("total") or 0),
+            "status": order["status"],
+            "payment_status": order["payment_status"],
+            "created_at": order["created_at"],
+        })
+
+    payment_reviews = (
+        supabase
+        .table("orders")
+        .select("id")
+        .eq("status", "pending_payment")
+        .eq("payment_status", "pending")
+        .neq("payment_proof_url", "")
+        .execute()
+    )
+    cancellation_requests = (
+        supabase
+        .table("order_cancellation_requests")
+        .select("id")
+        .eq("status", "pending")
+        .execute()
+    )
+    refunds_required = (
+        supabase
+        .table("orders")
+        .select("id")
+        .eq("refund_status", "required")
+        .execute()
+    )
+    low_stock_response = (
+        supabase
+        .table("products")
+        .select("id, name, stock_quantity, status")
+        .eq("status", "active")
+        .lte("stock_quantity", 5)
+        .order("stock_quantity", desc=False)
+        .execute()
+    )
+
+    attention = {
+        "payment_reviews": len(payment_reviews.data or []),
+        "cancellation_requests": len(cancellation_requests.data or []),
+        "refunds_required": len(refunds_required.data or []),
+        "low_stock_products": len(low_stock_response.data or []),
+    }
+
+    return {
+        "period": {
+            "days": 30,
+            "starts_at": period_start_iso,
+            "ends_at": now.isoformat(),
+        },
+        "metrics": {
+            "revenue": round(revenue, 2),
+            "orders": order_count,
+            "average_order_value": round(revenue / order_count, 2)
+            if order_count
+            else 0,
+            "needs_attention": sum(attention.values()),
+        },
+        "attention": attention,
+        "sales_trend": [
+            {
+                **trend_by_date[day],
+                "revenue": round(trend_by_date[day]["revenue"], 2),
+            }
+            for day in sorted(trend_by_date)
+        ],
+        "top_products": top_products,
+        "recent_orders": recent_orders,
+        "low_stock_products": (low_stock_response.data or [])[:6],
+    }
 
 
 @app.get("/admin/analytics/summary")

@@ -19,34 +19,19 @@ type SearchProduct = {
   primary_image: string | null;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+type StorefrontCategory = {
+  id: string;
+  name: string;
+  slug: string;
+  active_product_count: number;
+};
 
-const CATEGORY_LINKS = [
-  {
-    label: "Furniture",
-    href: "/products?category=furniture",
-  },
-  {
-    label: "Tables",
-    href: "/products?category=tables",
-  },
-  {
-    label: "Seating",
-    href: "/products?category=seating",
-  },
-  {
-    label: "Lighting",
-    href: "/products?category=lighting",
-  },
-  {
-    label: "Decor",
-    href: "/products?category=decor",
-  },
-  {
-    label: "Objects",
-    href: "/products?category=objects",
-  },
-];
+type NavigationItem = {
+  label: string;
+  href: string;
+};
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 const ROOM_LINKS = [
   {
@@ -69,15 +54,6 @@ const ROOM_LINKS = [
 
 const POPULAR_SEARCHES = ["Seating", "Tables", "Lighting", "Oak", "Black"];
 
-const BROWSE_SHORTCUTS = [
-  { label: "Furniture", href: "/products?category=furniture" },
-  { label: "Tables", href: "/products?category=tables" },
-  { label: "Seating", href: "/products?category=seating" },
-  { label: "Lighting", href: "/products?category=lighting" },
-  { label: "Decor", href: "/products?category=decor" },
-  { label: "Objects", href: "/products?category=objects" },
-];
-
 export default function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -88,6 +64,7 @@ export default function Navbar() {
   const [searchProducts, setSearchProducts] = useState<SearchProduct[]>([]);
   const [searchLoaded, setSearchLoaded] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [categoryLinks, setCategoryLinks] = useState<NavigationItem[]>([]);
 
   const [accountOpen, setAccountOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -97,12 +74,81 @@ export default function Navbar() {
   const [megaMenu, setMegaMenu] = useState<"categories" | "rooms" | null>(null);
 
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [scrolled, setScrolled] = useState(false);
 
   const desktopSearchRef = useRef<HTMLDivElement | null>(null);
   const accountRef = useRef<HTMLDivElement | null>(null);
   const navRef = useRef<HTMLElement | null>(null);
 
   const hideNavbar = pathname?.startsWith("/admin");
+  const isHomePage = pathname === "/";
+
+  /*
+   * 首页 Navbar scroll 状态。
+   *
+   * 注意：
+   * 不在 effect body 里面直接 setState，
+   * 避免 react-hooks/set-state-in-effect warning。
+   */
+  useEffect(() => {
+    if (!isHomePage) {
+      return;
+    }
+
+    function handleScroll() {
+      setScrolled(window.scrollY > 20);
+    }
+
+    const animationFrame = requestAnimationFrame(handleScroll);
+
+    window.addEventListener("scroll", handleScroll, {
+      passive: true,
+    });
+
+    return () => {
+      cancelAnimationFrame(animationFrame);
+      window.removeEventListener("scroll", handleScroll);
+    };
+  }, [isHomePage]);
+
+  useEffect(() => {
+    if (hideNavbar) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadCategories() {
+      try {
+        const response = await fetch(`${API_URL}/categories`);
+
+        if (!response.ok) {
+          throw new Error("Unable to load categories.");
+        }
+
+        const data = (await response.json()) as StorefrontCategory[];
+
+        if (!cancelled) {
+          setCategoryLinks(
+            data
+              .filter((category) => category.active_product_count > 0)
+              .map((category) => ({
+                label: category.name,
+                href: `/products?category=${encodeURIComponent(category.slug)}`,
+              })),
+          );
+        }
+      } catch (error) {
+        console.error("Unable to load navbar categories:", error);
+      }
+    }
+
+    void loadCategories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hideNavbar]);
 
   useEffect(() => {
     let cancelled = false;
@@ -257,454 +303,531 @@ export default function Navbar() {
     return null;
   }
 
-  return (
-    <header
-      ref={navRef}
-      className="sticky top-0 z-[1000] border-b border-[#c9c1b7]/70 bg-[#f4f0e9]/96 text-[#2d2824] backdrop-blur-md"
-    >
-      {/* Primary row */}
-      <div className="grid min-h-[72px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-5 px-4 md:px-6 lg:min-h-[78px] lg:gap-8 lg:px-8">
-        <Link
-          href="/"
-          onClick={closeNavigationUI}
-          className="shrink-0 text-xl font-medium tracking-[-0.035em] text-[#4b1f26] md:text-2xl"
-        >
-          STUDIO MONTRO
-        </Link>
+  const homeTransparent = isHomePage && !scrolled;
 
-        {/* Desktop live search */}
+  const headerClassName = isHomePage
+    ? `fixed left-0 right-0 top-0 z-[1000] transition-all duration-300 ${
+        scrolled
+          ? "border-b border-[#c9c1b7]/70 bg-[#f4f0e9]/96 text-[#2d2824] backdrop-blur-md"
+          : "border-b border-transparent bg-transparent text-white"
+      }`
+    : "sticky top-0 z-[1000] border-b border-[#c9c1b7]/70 bg-[#f4f0e9]/96 text-[#2d2824] backdrop-blur-md";
+
+  return (
+    <header ref={navRef} className={headerClassName}>
+      {/* 首页透明状态的顶部深色渐变 */}
+      {homeTransparent && (
         <div
-          ref={desktopSearchRef}
-          className="relative hidden min-w-0 lg:block"
-        >
-          <div
-            className={`flex h-11 items-center rounded-full border bg-[#faf7f1] px-4 transition ${
-              searchOpen
-                ? "border-[#4b1f26]/55"
-                : "border-[#c9c1b7] hover:border-[#9d9185]"
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-0 z-0 h-[180px] bg-gradient-to-b from-black/65 via-black/30 to-transparent"
+        />
+      )}
+
+      {/* Navbar actual content */}
+      <div className="relative z-10">
+        {/* Primary row */}
+        <div className="grid min-h-[72px] grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-5 px-4 md:px-6 lg:min-h-[78px] lg:gap-8 lg:px-8">
+          <Link
+            href="/"
+            onClick={closeNavigationUI}
+            className={`shrink-0 text-xl font-medium tracking-[-0.035em] transition-colors md:text-2xl ${
+              homeTransparent ? "text-white" : "text-[#4b1f26]"
             }`}
           >
-            <svg
-              viewBox="0 0 24 24"
-              className="mr-3 h-4 w-4 shrink-0 text-[#6f675f]"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              aria-hidden="true"
+            STUDIO MONTRO
+          </Link>
+
+          {/* Desktop live search */}
+          <div
+            ref={desktopSearchRef}
+            className="relative hidden min-w-0 lg:block"
+          >
+            <div
+              className={`flex h-11 items-center rounded-full border px-4 transition ${
+                homeTransparent
+                  ? searchOpen
+                    ? "border-white/60 bg-black/20 backdrop-blur-md"
+                    : "border-white/35 bg-black/10 backdrop-blur-sm hover:border-white/60 hover:bg-black/15"
+                  : searchOpen
+                    ? "border-[#4b1f26]/55 bg-[#faf7f1]"
+                    : "border-[#c9c1b762] bg-[#faf7f1] hover:border-[#9d9185]"
+              }`}
             >
-              <circle cx="11" cy="11" r="6.5" />
-              <path d="m16 16 4 4" />
-            </svg>
-
-            <input
-              type="text"
-              value={searchTerm}
-              onFocus={openSearch}
-              onChange={(event) => {
-                setSearchTerm(event.target.value);
-                openSearch();
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  submitSearch();
-                }
-              }}
-              placeholder="Search pieces, categories..."
-              className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#9a9188]"
-            />
-
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchTerm("");
-                  setSearchOpen(true);
-                }}
-                className="ml-3 flex h-7 w-7 items-center justify-center rounded-full text-lg font-light text-[#6f675f] transition hover:bg-[#ece6de] hover:text-[#25211d]"
-                aria-label="Clear search"
+              <svg
+                viewBox="0 0 24 24"
+                className={`mr-3 h-4 w-4 shrink-0 ${
+                  homeTransparent ? "text-white/80" : "text-[#6f675f]"
+                }`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                aria-hidden="true"
               >
-                ×
-              </button>
+                <circle cx="11" cy="11" r="6.5" />
+                <path d="m16 16 4 4" />
+              </svg>
+
+              <input
+                type="text"
+                value={searchTerm}
+                onFocus={openSearch}
+                onChange={(event) => {
+                  setSearchTerm(event.target.value);
+                  openSearch();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    submitSearch();
+                  }
+                }}
+                placeholder="Search pieces, categories..."
+                className={`min-w-0 flex-1 bg-transparent text-sm outline-none ${
+                  homeTransparent
+                    ? "text-white placeholder:text-white/60"
+                    : "text-[#2d2824] placeholder:text-[#9a9188]"
+                }`}
+              />
+
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setSearchOpen(true);
+                  }}
+                  className={`ml-3 flex h-7 w-7 items-center justify-center rounded-full text-lg font-light transition ${
+                    homeTransparent
+                      ? "text-white/80 hover:bg-white/10 hover:text-white"
+                      : "text-[#6f675f] hover:bg-[#ece6de] hover:text-[#25211d]"
+                  }`}
+                  aria-label="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            {searchOpen && (
+              <div className="absolute left-0 right-0 top-[calc(100%+10px)] overflow-hidden border border-[#c9c1b7] bg-[#f4f0e9] text-[#2d2824] shadow-[0_20px_50px_rgba(54,39,31,0.14)]">
+                <SearchPanel
+                  searchTerm={searchTerm}
+                  searchResults={searchResults}
+                  searchLoading={searchLoading}
+                  categoryLinks={categoryLinks}
+                  onPopularSearch={choosePopularSearch}
+                  onClose={() => setSearchOpen(false)}
+                  onSubmit={submitSearch}
+                />
+              </div>
             )}
           </div>
 
-          {searchOpen && (
-            <div className="absolute left-0 right-0 top-[calc(100%+10px)] overflow-hidden border border-[#c9c1b7] bg-[#f4f0e9] shadow-[0_20px_50px_rgba(54,39,31,0.14)]">
+          {/* Right actions */}
+          <div className="flex items-center justify-end gap-1.5 md:gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setMobileOpen(false);
+                setAccountOpen(false);
+                openSearch();
+              }}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition lg:hidden ${
+                homeTransparent ? "hover:bg-white/10" : "hover:bg-[#e8e1d9]"
+              }`}
+              aria-label="Search"
+            >
+              <SearchIcon />
+            </button>
+
+            <Link
+              href="/saved"
+              onClick={closeNavigationUI}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+                homeTransparent ? "hover:bg-white/10" : "hover:bg-[#e8e1d9]"
+              }`}
+              aria-label="Saved"
+            >
+              <HeartIcon />
+            </Link>
+
+            <div ref={accountRef} className="relative hidden md:block">
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchOpen(false);
+                  setMobileOpen(false);
+                  setAccountOpen((open) => !open);
+                }}
+                className={`flex h-10 w-10 items-center justify-center rounded-full transition ${
+                  homeTransparent ? "hover:bg-white/10" : "hover:bg-[#e8e1d9]"
+                }`}
+                aria-label="Account"
+              >
+                <AccountIcon />
+              </button>
+
+              {accountOpen && (
+                <div className="absolute right-0 top-[calc(100%+10px)] w-[260px] border border-[#c9c1b7] bg-[#f4f0e9] p-5 text-[#2d2824] shadow-[0_18px_44px_rgba(54,39,31,0.14)]">
+                  {userEmail ? (
+                    <>
+                      <p className="truncate text-xs text-[#7c736b]">
+                        {userEmail}
+                      </p>
+
+                      <div className="mt-5 grid gap-1">
+                        <AccountMenuLink
+                          href="/account"
+                          label="Account overview"
+                          icon={<AccountOverviewIcon />}
+                          onClick={closeNavigationUI}
+                        />
+
+                        <AccountMenuLink
+                          href="/account/orders"
+                          label="Orders"
+                          icon={<OrdersIcon />}
+                          onClick={closeNavigationUI}
+                        />
+
+                        <AccountMenuLink
+                          href="/account/addresses"
+                          label="Addresses"
+                          icon={<AddressIcon />}
+                          onClick={closeNavigationUI}
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleLogout()}
+                        className="mt-4 flex w-full items-center gap-3 border-t border-[#d5cdc3] pt-4 text-left text-sm text-[#6f675f] transition hover:text-[#4b1f26]"
+                      >
+                        <SignOutIcon />
+                        <span>Sign out</span>
+                      </button>
+                    </>
+                  ) : (
+                    <div className="grid gap-3">
+                      <Link
+                        href="/login"
+                        onClick={closeNavigationUI}
+                        className="bg-[#4b1f26] px-4 py-3 text-center text-sm text-[#f4efe7] transition hover:bg-[#5a2730]"
+                      >
+                        Sign in
+                      </Link>
+
+                      <Link
+                        href="/signup"
+                        onClick={closeNavigationUI}
+                        className="border border-[#4b1f26] px-4 py-3 text-center text-sm text-[#4b1f26] transition hover:bg-[#eee6de]"
+                      >
+                        Create account
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <Link
+              href="/cart"
+              onClick={closeNavigationUI}
+              className={`relative flex h-10 w-10 items-center justify-center rounded-full transition ${
+                homeTransparent ? "hover:bg-white/10" : "hover:bg-[#e8e1d9]"
+              }`}
+              aria-label={`Cart${
+                cartCount > 0
+                  ? `, ${cartCount} item${cartCount === 1 ? "" : "s"}`
+                  : ""
+              }`}
+            >
+              <BagIcon />
+
+              {cartCount > 0 && (
+                <span
+                  className={`absolute -right-0.5 -top-0.5 flex min-h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-medium leading-none ${
+                    homeTransparent
+                      ? "bg-white text-[#4b1f26]"
+                      : "bg-[#4b1f26] text-[#f4efe7]"
+                  }`}
+                >
+                  {cartCount}
+                </span>
+              )}
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSearchOpen(false);
+                setAccountOpen(false);
+                setMobileOpen((open) => !open);
+              }}
+              className={`flex h-10 w-10 items-center justify-center rounded-full transition md:hidden ${
+                homeTransparent ? "hover:bg-white/10" : "hover:bg-[#e8e1d9]"
+              }`}
+              aria-label="Menu"
+            >
+              <MenuIcon open={mobileOpen} />
+            </button>
+          </div>
+        </div>
+
+        {/* Desktop secondary navigation */}
+        <div
+          className={`hidden border-t lg:block ${
+            homeTransparent ? "border-white/20" : "border-[#d3cbc1]/80"
+          }`}
+        >
+          <div className="flex h-[42px] items-center gap-8 px-8">
+            <div
+              className="relative h-full"
+              onMouseEnter={() => setMegaMenu("categories")}
+              onMouseLeave={() => setMegaMenu(null)}
+            >
+              <button
+                type="button"
+                onFocus={() => setMegaMenu("categories")}
+                className={`flex h-full items-center text-[11px] uppercase tracking-[0.14em] transition ${
+                  homeTransparent
+                    ? "text-white/85 hover:text-white"
+                    : megaMenu === "categories"
+                      ? "text-[#4b1f26]"
+                      : "text-[#625a53] hover:text-[#4b1f26]"
+                }`}
+              >
+                Categories
+              </button>
+
+              {megaMenu === "categories" && (
+                <div className="absolute left-0 top-full z-[1100] w-[300px] border border-[#d2c9bf] bg-[#536d5d] py-2 text-[#f4efe7] shadow-[0_20px_45px_rgba(50,39,31,0.16)]">
+                  {categoryLinks.map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={closeNavigationUI}
+                      className="group flex items-center justify-between gap-5 px-5 py-3.5 transition hover:bg-[#607a69]"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-[15px] tracking-[-0.01em] text-[#f4efe7]">
+                          {item.label}
+                        </p>
+                      </div>
+
+                      <span className="shrink-0 text-sm text-[#f4efe7]/45 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-[#f4efe7]">
+                        →
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div
+              className="relative h-full"
+              onMouseEnter={() => setMegaMenu("rooms")}
+              onMouseLeave={() => setMegaMenu(null)}
+            >
+              <button
+                type="button"
+                onFocus={() => setMegaMenu("rooms")}
+                className={`flex h-full items-center text-[11px] uppercase tracking-[0.14em] transition ${
+                  homeTransparent
+                    ? "text-white/85 hover:text-white"
+                    : megaMenu === "rooms"
+                      ? "text-[#4b1f26]"
+                      : "text-[#625a53] hover:text-[#4b1f26]"
+                }`}
+              >
+                Rooms
+              </button>
+
+              {megaMenu === "rooms" && (
+                <div className="absolute left-0 top-full z-[1100] w-[300px] border border-[#d2c9bf] bg-[#536d5d] py-2 text-[#f4efe7] shadow-[0_20px_45px_rgba(50,39,31,0.16)]">
+                  {ROOM_LINKS.map((item) => (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={closeNavigationUI}
+                      className="group flex items-center justify-between gap-5 px-5 py-3.5 transition hover:bg-[#607a69]"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-[15px] tracking-[-0.01em] text-[#f4efe7]">
+                          {item.label}
+                        </p>
+                      </div>
+
+                      <span className="shrink-0 text-sm text-[#f4efe7]/45 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-[#f4efe7]">
+                        →
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <Link
+              href="/products?sort=newest"
+              onClick={closeNavigationUI}
+              onMouseEnter={() => setMegaMenu(null)}
+              className={`flex h-full items-center text-[11px] uppercase tracking-[0.14em] transition ${
+                homeTransparent
+                  ? "text-white/85 hover:text-white"
+                  : "text-[#625a53] hover:text-[#4b1f26]"
+              }`}
+            >
+              New
+            </Link>
+
+            <Link
+              href="/products"
+              onClick={closeNavigationUI}
+              onMouseEnter={() => setMegaMenu(null)}
+              className={`ml-auto flex h-full items-center text-[11px] uppercase tracking-[0.14em] transition ${
+                homeTransparent
+                  ? "text-white/70 hover:text-white"
+                  : "text-[#857b73] hover:text-[#4b1f26]"
+              }`}
+            >
+              Shop all
+            </Link>
+          </div>
+        </div>
+
+        {/* Mobile search panel */}
+        {searchOpen && (
+          <div className="border-t border-[#d3cbc1] bg-[#f4f0e9] px-4 py-4 text-[#2d2824] lg:hidden">
+            <div className="flex h-11 items-center rounded-full border border-[#c9c1b7] bg-[#faf7f1] px-4">
+              <SearchIcon />
+
+              <input
+                type="text"
+                autoFocus
+                value={searchTerm}
+                onChange={(event) => {
+                  setSearchTerm(event.target.value);
+                  void ensureSearchProducts();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    submitSearch();
+                  }
+                }}
+                placeholder="Search pieces..."
+                className="ml-3 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#9a9188]"
+              />
+
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => setSearchTerm("")}
+                  className="ml-3 text-lg font-light text-[#6f675f]"
+                  aria-label="Clear search"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4 overflow-hidden border border-[#d3cbc1]">
               <SearchPanel
                 searchTerm={searchTerm}
                 searchResults={searchResults}
                 searchLoading={searchLoading}
+                categoryLinks={categoryLinks}
                 onPopularSearch={choosePopularSearch}
                 onClose={() => setSearchOpen(false)}
                 onSubmit={submitSearch}
               />
             </div>
-          )}
-        </div>
-
-        {/* Right actions */}
-        <div className="flex items-center justify-end gap-1.5 md:gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setMobileOpen(false);
-              setAccountOpen(false);
-              openSearch();
-            }}
-            className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-[#e8e1d9] lg:hidden"
-            aria-label="Search"
-          >
-            <SearchIcon />
-          </button>
-
-          <Link
-            href="/saved"
-            onClick={closeNavigationUI}
-            className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-[#e8e1d9]"
-            aria-label="Saved"
-          >
-            <HeartIcon />
-          </Link>
-
-          <div ref={accountRef} className="relative hidden md:block">
-            <button
-              type="button"
-              onClick={() => {
-                setSearchOpen(false);
-                setMobileOpen(false);
-                setAccountOpen((open) => !open);
-              }}
-              className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-[#e8e1d9]"
-              aria-label="Account"
-            >
-              <AccountIcon />
-            </button>
-
-            {accountOpen && (
-              <div className="absolute right-0 top-[calc(100%+10px)] w-[260px] border border-[#c9c1b7] bg-[#f4f0e9] p-5 shadow-[0_18px_44px_rgba(54,39,31,0.14)]">
-                {userEmail ? (
-                  <>
-                    <p className="truncate text-xs text-[#7c736b]">
-                      {userEmail}
-                    </p>
-
-                    <div className="mt-5 grid gap-1">
-                      <AccountMenuLink
-                        href="/account"
-                        label="Account overview"
-                        icon={<AccountOverviewIcon />}
-                        onClick={closeNavigationUI}
-                      />
-                      <AccountMenuLink
-                        href="/account/orders"
-                        label="Orders"
-                        icon={<OrdersIcon />}
-                        onClick={closeNavigationUI}
-                      />
-                      <AccountMenuLink
-                        href="/account/addresses"
-                        label="Addresses"
-                        icon={<AddressIcon />}
-                        onClick={closeNavigationUI}
-                      />
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => void handleLogout()}
-                      className="mt-4 flex w-full items-center gap-3 border-t border-[#d5cdc3] pt-4 text-left text-sm text-[#6f675f] transition hover:text-[#4b1f26]"
-                    >
-                      <SignOutIcon />
-                      <span>Sign out</span>
-                    </button>
-                  </>
-                ) : (
-                  <div className="grid gap-3">
-                    <Link
-                      href="/login"
-                      onClick={closeNavigationUI}
-                      className="bg-[#4b1f26] px-4 py-3 text-center text-sm text-[#f4efe7] transition hover:bg-[#5a2730]"
-                    >
-                      Sign in
-                    </Link>
-                    <Link
-                      href="/signup"
-                      onClick={closeNavigationUI}
-                      className="border border-[#4b1f26] px-4 py-3 text-center text-sm text-[#4b1f26] transition hover:bg-[#eee6de]"
-                    >
-                      Create account
-                    </Link>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
+        )}
 
-          <Link
-            href="/cart"
-            onClick={closeNavigationUI}
-            className="relative flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-[#e8e1d9]"
-            aria-label={`Cart${cartCount > 0 ? `, ${cartCount} item${cartCount === 1 ? "" : "s"}` : ""}`}
-          >
-            <BagIcon />
-
-            {cartCount > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex min-h-4 min-w-4 items-center justify-center rounded-full bg-[#4b1f26] px-1 text-[9px] font-medium leading-none text-[#f4efe7]">
-                {cartCount}
-              </span>
-            )}
-          </Link>
-
-          <button
-            type="button"
-            onClick={() => {
-              setSearchOpen(false);
-              setAccountOpen(false);
-              setMobileOpen((open) => !open);
-            }}
-            className="flex h-10 w-10 items-center justify-center rounded-full transition hover:bg-[#e8e1d9] md:hidden"
-            aria-label="Menu"
-          >
-            <MenuIcon open={mobileOpen} />
-          </button>
-        </div>
-      </div>
-
-      {/* Slim desktop secondary navigation */}
-      <div className="hidden border-t border-[#d3cbc1]/80 lg:block">
-        <div className="flex h-[42px] items-center gap-8 px-8">
-          <div
-            className="relative h-full"
-            onMouseEnter={() => setMegaMenu("categories")}
-            onMouseLeave={() => setMegaMenu(null)}
-          >
-            <button
-              type="button"
-              onFocus={() => setMegaMenu("categories")}
-              className={`flex h-full items-center text-[11px] uppercase tracking-[0.14em] transition ${
-                megaMenu === "categories"
-                  ? "text-[#4b1f26]"
-                  : "text-[#625a53] hover:text-[#4b1f26]"
-              }`}
-            >
-              Categories
-            </button>
-
-            {megaMenu === "categories" && (
-              <div className="absolute left-0 top-full z-[1100] w-[300px] border border-[#d2c9bf] bg-[#536d5d] py-2 text-[#f4efe7] shadow-[0_20px_45px_rgba(50,39,31,0.16)]">
-                {CATEGORY_LINKS.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={closeNavigationUI}
-                    className="group flex items-center justify-between gap-5 px-5 py-3.5 transition hover:bg-[#607a69]"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-[15px] tracking-[-0.01em] text-[#f4efe7]">
-                        {item.label}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-sm text-[#f4efe7]/45 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-[#f4efe7]">
-                      →
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <div
-            className="relative h-full"
-            onMouseEnter={() => setMegaMenu("rooms")}
-            onMouseLeave={() => setMegaMenu(null)}
-          >
-            <button
-              type="button"
-              onFocus={() => setMegaMenu("rooms")}
-              className={`flex h-full items-center text-[11px] uppercase tracking-[0.14em] transition ${
-                megaMenu === "rooms"
-                  ? "text-[#4b1f26]"
-                  : "text-[#625a53] hover:text-[#4b1f26]"
-              }`}
-            >
-              Rooms
-            </button>
-
-            {megaMenu === "rooms" && (
-              <div className="absolute left-0 top-full z-[1100] w-[300px] border border-[#d2c9bf] bg-[#536d5d] py-2 text-[#f4efe7] shadow-[0_20px_45px_rgba(50,39,31,0.16)]">
-                {ROOM_LINKS.map((item) => (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={closeNavigationUI}
-                    className="group flex items-center justify-between gap-5 px-5 py-3.5 transition hover:bg-[#607a69]"
-                  >
-                    <div className="min-w-0">
-                      <p className="text-[15px] tracking-[-0.01em] text-[#f4efe7]">
-                        {item.label}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-sm text-[#f4efe7]/45 transition-transform duration-200 group-hover:translate-x-1 group-hover:text-[#f4efe7]">
-                      →
-                    </span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-
-          <Link
-            href="/products?sort=newest"
-            onClick={closeNavigationUI}
-            onMouseEnter={() => setMegaMenu(null)}
-            className="flex h-full items-center text-[11px] uppercase tracking-[0.14em] text-[#625a53] transition hover:text-[#4b1f26]"
-          >
-            New
-          </Link>
-
-          <Link
-            href="/products"
-            onClick={closeNavigationUI}
-            onMouseEnter={() => setMegaMenu(null)}
-            className="ml-auto flex h-full items-center text-[11px] uppercase tracking-[0.14em] text-[#857b73] transition hover:text-[#4b1f26]"
-          >
-            Shop all
-          </Link>
-        </div>
-      </div>
-
-      {/* Mobile search panel */}
-      {searchOpen && (
-        <div className="border-t border-[#d3cbc1] bg-[#f4f0e9] px-4 py-4 lg:hidden">
-          <div className="flex h-11 items-center rounded-full border border-[#c9c1b7] bg-[#faf7f1] px-4">
-            <SearchIcon />
-
-            <input
-              type="text"
-              autoFocus
-              value={searchTerm}
-              onChange={(event) => {
-                setSearchTerm(event.target.value);
-                void ensureSearchProducts();
+        {/* Mobile navigation */}
+        {mobileOpen && (
+          <div className="border-t border-[#d3cbc1] bg-[#f4f0e9] px-4 pb-6 pt-2 text-[#2d2824] md:hidden">
+            <MobileAccordion
+              label="Categories"
+              open={mobileCategoriesOpen}
+              onToggle={() => {
+                setMobileCategoriesOpen((open) => !open);
+                setMobileRoomsOpen(false);
               }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  submitSearch();
-                }
-              }}
-              placeholder="Search pieces..."
-              className="ml-3 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-[#9a9188]"
+              items={categoryLinks}
+              onNavigate={closeNavigationUI}
             />
 
-            {searchTerm && (
-              <button
-                type="button"
-                onClick={() => setSearchTerm("")}
-                className="ml-3 text-lg font-light text-[#6f675f]"
-                aria-label="Clear search"
-              >
-                ×
-              </button>
-            )}
-          </div>
-
-          <div className="mt-4 overflow-hidden border border-[#d3cbc1]">
-            <SearchPanel
-              searchTerm={searchTerm}
-              searchResults={searchResults}
-              searchLoading={searchLoading}
-              onPopularSearch={choosePopularSearch}
-              onClose={() => setSearchOpen(false)}
-              onSubmit={submitSearch}
+            <MobileAccordion
+              label="Rooms"
+              open={mobileRoomsOpen}
+              onToggle={() => {
+                setMobileRoomsOpen((open) => !open);
+                setMobileCategoriesOpen(false);
+              }}
+              items={ROOM_LINKS}
+              onNavigate={closeNavigationUI}
             />
+
+            <Link
+              href="/products?sort=newest"
+              onClick={closeNavigationUI}
+              className="flex items-center justify-between border-b border-[#d3cbc1] py-4 text-sm uppercase tracking-[0.11em]"
+            >
+              New
+              <span>→</span>
+            </Link>
+
+            <Link
+              href="/products"
+              onClick={closeNavigationUI}
+              className="flex items-center justify-between border-b border-[#d3cbc1] py-4 text-sm uppercase tracking-[0.11em]"
+            >
+              Shop all
+              <span>→</span>
+            </Link>
+
+            <div className="mt-5 grid gap-2">
+              {userEmail ? (
+                <>
+                  <Link
+                    href="/account"
+                    onClick={closeNavigationUI}
+                    className="border border-[#4b1f26] px-4 py-3 text-center text-sm text-[#4b1f26]"
+                  >
+                    My account
+                  </Link>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleLogout()}
+                    className="bg-[#4b1f26] px-4 py-3 text-sm text-[#f4efe7]"
+                  >
+                    Sign out
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    onClick={closeNavigationUI}
+                    className="bg-[#4b1f26] px-4 py-3 text-center text-sm text-[#f4efe7]"
+                  >
+                    Sign in
+                  </Link>
+
+                  <Link
+                    href="/signup"
+                    onClick={closeNavigationUI}
+                    className="border border-[#4b1f26] px-4 py-3 text-center text-sm text-[#4b1f26]"
+                  >
+                    Create account
+                  </Link>
+                </>
+              )}
+            </div>
           </div>
-        </div>
-      )}
-
-      {/* Mobile navigation */}
-      {mobileOpen && (
-        <div className="border-t border-[#d3cbc1] bg-[#f4f0e9] px-4 pb-6 pt-2 md:hidden">
-          <MobileAccordion
-            label="Categories"
-            open={mobileCategoriesOpen}
-            onToggle={() => {
-              setMobileCategoriesOpen((open) => !open);
-              setMobileRoomsOpen(false);
-            }}
-            items={CATEGORY_LINKS}
-            onNavigate={closeNavigationUI}
-          />
-
-          <MobileAccordion
-            label="Rooms"
-            open={mobileRoomsOpen}
-            onToggle={() => {
-              setMobileRoomsOpen((open) => !open);
-              setMobileCategoriesOpen(false);
-            }}
-            items={ROOM_LINKS}
-            onNavigate={closeNavigationUI}
-          />
-
-          <Link
-            href="/products?sort=newest"
-            onClick={closeNavigationUI}
-            className="flex items-center justify-between border-b border-[#d3cbc1] py-4 text-sm uppercase tracking-[0.11em]"
-          >
-            New
-            <span>→</span>
-          </Link>
-
-          <Link
-            href="/products"
-            onClick={closeNavigationUI}
-            className="flex items-center justify-between border-b border-[#d3cbc1] py-4 text-sm uppercase tracking-[0.11em]"
-          >
-            Shop all
-            <span>→</span>
-          </Link>
-
-          <div className="mt-5 grid gap-2">
-            {userEmail ? (
-              <>
-                <Link
-                  href="/account"
-                  onClick={closeNavigationUI}
-                  className="border border-[#4b1f26] px-4 py-3 text-center text-sm text-[#4b1f26]"
-                >
-                  My account
-                </Link>
-
-                <button
-                  type="button"
-                  onClick={() => void handleLogout()}
-                  className="bg-[#4b1f26] px-4 py-3 text-sm text-[#f4efe7]"
-                >
-                  Sign out
-                </button>
-              </>
-            ) : (
-              <>
-                <Link
-                  href="/login"
-                  onClick={closeNavigationUI}
-                  className="bg-[#4b1f26] px-4 py-3 text-center text-sm text-[#f4efe7]"
-                >
-                  Sign in
-                </Link>
-
-                <Link
-                  href="/signup"
-                  onClick={closeNavigationUI}
-                  className="border border-[#4b1f26] px-4 py-3 text-center text-sm text-[#4b1f26]"
-                >
-                  Create account
-                </Link>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </header>
   );
 }
@@ -730,6 +853,7 @@ function AccountMenuLink({
         <span className="flex h-5 w-5 shrink-0 items-center justify-center text-[#746b63] transition group-hover:text-[#4b1f26]">
           {icon}
         </span>
+
         <span>{label}</span>
       </span>
 
@@ -744,6 +868,7 @@ function SearchPanel({
   searchTerm,
   searchResults,
   searchLoading,
+  categoryLinks,
   onPopularSearch,
   onClose,
   onSubmit,
@@ -751,6 +876,7 @@ function SearchPanel({
   searchTerm: string;
   searchResults: SearchProduct[];
   searchLoading: boolean;
+  categoryLinks: NavigationItem[];
   onPopularSearch: (value: string) => void;
   onClose: () => void;
   onSubmit: () => void;
@@ -782,7 +908,7 @@ function SearchPanel({
         </p>
 
         <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-1 md:grid-cols-3">
-          {BROWSE_SHORTCUTS.map((item) => (
+          {categoryLinks.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -807,6 +933,7 @@ function SearchPanel({
         {!searchLoading && searchResults.length === 0 && (
           <div className="px-3 py-7">
             <p className="text-sm text-[#514b45]">No matching pieces yet.</p>
+
             <p className="mt-2 text-xs leading-5 text-[#8a8178]">
               Try another product name or category.
             </p>
@@ -835,6 +962,7 @@ function SearchPanel({
                 <p className="truncate text-sm font-medium text-[#2d2824]">
                   {product.name}
                 </p>
+
                 <p className="mt-1 truncate text-xs text-[#8a8178]">
                   {product.category?.name ?? "Studio MONTRO"}
                 </p>

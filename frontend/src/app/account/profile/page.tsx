@@ -5,6 +5,12 @@ import Link from "next/link";
 
 import { authFetch } from "@/src/lib/authFetch";
 import { supabase } from "@/src/lib/supabase";
+import { PasswordField } from "@/src/components/auth/PasswordField";
+import { PasswordRequirements } from "@/src/components/auth/PasswordRequirements";
+import { FormField } from "@/src/components/form/FormField";
+import { TextInput } from "@/src/components/form/TextInput";
+import { withReturnTo } from "@/src/lib/authRedirect";
+import { isPasswordValid } from "@/src/lib/passwordValidation";
 
 type Profile = {
   id: string;
@@ -29,6 +35,8 @@ export default function AccountProfilePage() {
   const [savingEmail, setSavingEmail] = useState(false);
   const [savingPassword, setSavingPassword] = useState(false);
 
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -36,6 +44,21 @@ export default function AccountProfilePage() {
   const [profileError, setProfileError] = useState(false);
   const [securityMessage, setSecurityMessage] = useState("");
   const [securityError, setSecurityError] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState(false);
+  const currentPasswordError =
+    passwordError && passwordMessage === "Current password is incorrect."
+      ? passwordMessage
+      : undefined;
+  const newPasswordError =
+    passwordError &&
+    passwordMessage === "Password must meet all four requirements."
+      ? passwordMessage
+      : undefined;
+  const confirmationError =
+    passwordError && passwordMessage === "The passwords do not match."
+      ? passwordMessage
+      : undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -171,18 +194,18 @@ export default function AccountProfilePage() {
   async function updatePassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    setSecurityMessage("");
-    setSecurityError(false);
+    setPasswordMessage("");
+    setPasswordError(false);
 
-    if (newPassword.length < 8) {
-      setSecurityError(true);
-      setSecurityMessage("Use at least 8 characters for your new password.");
+    if (!isPasswordValid(newPassword)) {
+      setPasswordError(true);
+      setPasswordMessage("Password must meet all four requirements.");
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setSecurityError(true);
-      setSecurityMessage("The passwords do not match.");
+      setPasswordError(true);
+      setPasswordMessage("The passwords do not match.");
       return;
     }
 
@@ -193,6 +216,27 @@ export default function AccountProfilePage() {
     setSavingPassword(true);
 
     try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user?.email) {
+        throw new Error("USER_EMAIL_UNAVAILABLE");
+      }
+
+      const { error: authenticationError } =
+        await supabase.auth.signInWithPassword({
+          email: user.email,
+          password: currentPassword,
+        });
+
+      if (authenticationError) {
+        setPasswordError(true);
+        setPasswordMessage("Current password is incorrect.");
+        return;
+      }
+
       const { error } = await supabase.auth.updateUser({
         password: newPassword,
       });
@@ -201,19 +245,28 @@ export default function AccountProfilePage() {
         throw error;
       }
 
-      setNewPassword("");
-      setConfirmPassword("");
-      setSecurityMessage("Password updated.");
-    } catch (error) {
-      setSecurityError(true);
-      setSecurityMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to update your password.",
-      );
+      clearPasswordFields();
+      setChangingPassword(false);
+      setPasswordMessage("Password updated.");
+    } catch {
+      setPasswordError(true);
+      setPasswordMessage("We couldn't update your password. Please try again.");
     } finally {
       setSavingPassword(false);
     }
+  }
+
+  function clearPasswordFields() {
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+  }
+
+  function cancelPasswordChange() {
+    clearPasswordFields();
+    setPasswordMessage("");
+    setPasswordError(false);
+    setChangingPassword(false);
   }
 
   if (loading) {
@@ -267,29 +320,42 @@ export default function AccountProfilePage() {
               onSubmit={savePersonalDetails}
               className="mt-7 max-w-2xl space-y-6"
             >
-              <Field
+              <FormField
                 label="Full name"
                 hint="Used for your account and customer records."
+                variant="account"
+                hintPosition="before"
               >
-                <input
-                  value={fullName}
-                  onChange={(event) => setFullName(event.target.value)}
-                  placeholder="Your name"
-                  className={inputClass}
-                />
-              </Field>
+                {(controlProps) => (
+                  <TextInput
+                    {...controlProps}
+                    value={fullName}
+                    onChange={(event) => setFullName(event.target.value)}
+                    autoComplete="name"
+                    placeholder="Your name"
+                    variant="account"
+                  />
+                )}
+              </FormField>
 
-              <Field
+              <FormField
                 label="Phone number"
                 hint="Your account contact number. Delivery addresses can keep a different recipient phone."
+                variant="account"
+                hintPosition="before"
               >
-                <input
-                  value={phone}
-                  onChange={(event) => setPhone(event.target.value)}
-                  placeholder="+60..."
-                  className={inputClass}
-                />
-              </Field>
+                {(controlProps) => (
+                  <TextInput
+                    {...controlProps}
+                    type="tel"
+                    value={phone}
+                    onChange={(event) => setPhone(event.target.value)}
+                    autoComplete="tel"
+                    placeholder="+60..."
+                    variant="account"
+                  />
+                )}
+              </FormField>
 
               {profileMessage && (
                 <Message error={profileError} text={profileMessage} />
@@ -329,13 +395,25 @@ export default function AccountProfilePage() {
                   inbox.
                 </p>
 
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
+                <FormField
+                  label="New email address"
+                  error={securityError ? securityMessage : undefined}
                   required
-                  className={`${inputClass} mt-5`}
-                />
+                  variant="account"
+                  className="mt-5"
+                >
+                  {(controlProps) => (
+                    <TextInput
+                      {...controlProps}
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      autoComplete="email"
+                      required
+                      variant="account"
+                    />
+                  )}
+                </FormField>
 
                 <button
                   type="submit"
@@ -346,47 +424,118 @@ export default function AccountProfilePage() {
                 </button>
               </form>
 
-              <form
-                onSubmit={updatePassword}
-                className="border border-[#c7beb5] bg-[#eee8df] p-6"
-              >
-                <p className="text-sm font-medium">Password</p>
+              <section className="border border-[#c7beb5] bg-[#eee8df] p-6">
+                {!changingPassword ? (
+                  <>
+                    <p className="text-sm font-medium">Password</p>
+                    <p className="mt-3 tracking-[0.18em] text-[#625a53]" aria-label="Password hidden">
+                      ••••••••••••
+                    </p>
+                    <p className="mt-3 text-xs leading-5 text-[#817870]">
+                      Keep your account secure with a password only you know.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPasswordMessage("");
+                        setPasswordError(false);
+                        setChangingPassword(true);
+                      }}
+                      className="mt-5 text-sm underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#4b1f26]"
+                    >
+                      Change password →
+                    </button>
+                    {passwordMessage && (
+                      <div className="mt-5">
+                        <Message error={passwordError} text={passwordMessage} />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <form onSubmit={updatePassword}>
+                    <div className="flex items-start justify-between gap-5">
+                      <div>
+                        <p className="text-sm font-medium">Change password</p>
+                        <p className="mt-2 text-xs leading-5 text-[#817870]">
+                          Confirm your current password before choosing a new one.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={cancelPasswordChange}
+                        disabled={savingPassword}
+                        className="text-xs underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#4b1f26] disabled:opacity-40"
+                      >
+                        Cancel
+                      </button>
+                    </div>
 
-                <p className="mt-2 text-xs leading-5 text-[#817870]">
-                  Use a new password with at least 8 characters.
-                </p>
+                    <div className="mt-5 space-y-5">
+                      <PasswordField
+                        id="current-password"
+                        label="Current password"
+                        value={currentPassword}
+                        onChange={(event) => setCurrentPassword(event.target.value)}
+                        autoComplete="current-password"
+                        placeholder="Your current password"
+                        error={currentPasswordError}
+                        variant="account"
+                      >
+                        <Link
+                          href={withReturnTo("/forgot-password", "/account/profile")}
+                          className="mt-3 inline-block text-xs underline decoration-[#aaa097] underline-offset-4 transition hover:text-[#4b1f26]"
+                        >
+                          Forgot your password?
+                        </Link>
+                      </PasswordField>
 
-                <div className="mt-5 space-y-4">
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                    placeholder="New password"
-                    autoComplete="new-password"
-                    className={inputClass}
-                  />
+                      <PasswordField
+                        id="new-password"
+                        label="New password"
+                        value={newPassword}
+                        onChange={(event) => setNewPassword(event.target.value)}
+                        autoComplete="new-password"
+                        placeholder="At least 8 characters"
+                        error={newPasswordError}
+                        variant="account"
+                      >
+                        <PasswordRequirements password={newPassword} />
+                      </PasswordField>
 
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(event) => setConfirmPassword(event.target.value)}
-                    placeholder="Confirm password"
-                    autoComplete="new-password"
-                    className={inputClass}
-                  />
-                </div>
+                      <PasswordField
+                        id="confirm-new-password"
+                        label="Confirm new password"
+                        value={confirmPassword}
+                        onChange={(event) => setConfirmPassword(event.target.value)}
+                        autoComplete="new-password"
+                        placeholder="Repeat password"
+                        error={confirmationError}
+                        variant="account"
+                      />
+                    </div>
 
-                <button
-                  type="submit"
-                  disabled={savingPassword}
-                  className="mt-5 border border-[#765149] bg-[#765149] px-4 py-3 text-sm text-[#f4f0e9] transition hover:bg-[#67443e] disabled:opacity-40"
-                >
-                  {savingPassword ? "Updating..." : "Update password"}
-                </button>
-              </form>
+                    {passwordMessage &&
+                      !currentPasswordError &&
+                      !newPasswordError &&
+                      !confirmationError && (
+                      <div className="mt-5">
+                        <Message error={passwordError} text={passwordMessage} />
+                      </div>
+                    )}
+
+                    <button
+                      type="submit"
+                      disabled={savingPassword}
+                      className="mt-5 border border-[#765149] bg-[#765149] px-4 py-3 text-sm text-[#f4f0e9] transition hover:bg-[#67443e] disabled:opacity-40"
+                    >
+                      {savingPassword ? "Updating..." : "Update password"}
+                    </button>
+                  </form>
+                )}
+              </section>
             </div>
 
-            {securityMessage && (
+            {securityMessage && !securityError && (
               <div className="mt-5 max-w-2xl">
                 <Message error={securityError} text={securityMessage} />
               </div>
@@ -449,30 +598,6 @@ export default function AccountProfilePage() {
   );
 }
 
-function Field({
-  label,
-  hint,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-sm font-medium">{label}</span>
-
-      {hint && (
-        <span className="mt-1 block text-xs leading-5 text-[#91877e]">
-          {hint}
-        </span>
-      )}
-
-      <div className="mt-3">{children}</div>
-    </label>
-  );
-}
-
 function Message({ error, text }: { error: boolean; text: string }) {
   return (
     <div
@@ -486,6 +611,3 @@ function Message({ error, text }: { error: boolean; text: string }) {
     </div>
   );
 }
-
-const inputClass =
-  "h-12 w-full border border-[#b8aea4] bg-[#f8f4ee] px-4 text-sm outline-none transition focus:border-[#5f6f59]";

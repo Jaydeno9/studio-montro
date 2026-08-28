@@ -355,7 +355,7 @@ export default function ProductDetailPage() {
       <section className="grid items-start gap-10 px-8 pb-24 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.72fr)] lg:gap-14">
         {/* GALLERY */}
         {/* GALLERY */}
-        <div className="min-w-0">
+        <div className="min-w-0 xl:sticky xl:top-[138px] xl:max-h-[calc(100dvh-154px)] xl:self-start xl:overflow-y-auto">
           {product.images.length > 0 ? (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {product.images.map((image, index) => (
@@ -389,7 +389,7 @@ export default function ProductDetailPage() {
         </div>
 
         {/* PRODUCT PANEL */}
-        <aside className="min-w-0 lg:sticky lg:top-24 lg:self-start">
+        <aside className="min-w-0">
           <div className="border-b border-[#cec6bc] pb-7">
             {product.category && (
               <p className="text-[11px] uppercase tracking-[0.17em] text-[#8a8178]">

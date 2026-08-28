@@ -1,5 +1,29 @@
 import { supabase } from "@/src/lib/supabase";
 
+export const ADMIN_ACCESS_DENIED_PATH = "/admin/login?access=denied";
+
+let adminExitPromise: Promise<void> | null = null;
+
+async function exitAdminArea(reason: "unauthorized" | "forbidden") {
+  if (!adminExitPromise) {
+    adminExitPromise = (async () => {
+      try {
+        await supabase.auth.signOut({ scope: "local" });
+      } finally {
+        if (typeof window !== "undefined") {
+          window.location.replace(
+            reason === "forbidden"
+              ? ADMIN_ACCESS_DENIED_PATH
+              : "/admin/login",
+          );
+        }
+      }
+    })();
+  }
+
+  await adminExitPromise;
+}
+
 export async function adminFetch(
   url: string,
   options: RequestInit = {},
@@ -9,6 +33,7 @@ export async function adminFetch(
   } = await supabase.auth.getSession();
 
   if (!session) {
+    await exitAdminArea("unauthorized");
     throw new Error("AUTH_REQUIRED");
   }
 
@@ -34,8 +59,7 @@ export async function adminFetch(
     } = await supabase.auth.refreshSession();
 
     if (error || !data.session) {
-      await supabase.auth.signOut();
-
+      await exitAdminArea("unauthorized");
       throw new Error("AUTH_REQUIRED");
     }
 
@@ -43,6 +67,16 @@ export async function adminFetch(
     response = await sendRequest(
       data.session.access_token,
     );
+  }
+
+  if (response.status === 401) {
+    await exitAdminArea("unauthorized");
+    throw new Error("AUTH_REQUIRED");
+  }
+
+  if (response.status === 403) {
+    await exitAdminArea("forbidden");
+    throw new Error("ADMIN_ACCESS_REVOKED");
   }
 
   return response;

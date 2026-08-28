@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
@@ -24,10 +30,18 @@ type Address = {
 
 type OrderItem = {
   id: string;
+  product_id?: string | null;
   product_name: string;
   unit_price: number;
   quantity: number;
   color_name: string | null;
+};
+
+type CatalogProduct = {
+  id: string;
+  name: string;
+  slug: string;
+  primary_image: string | null;
 };
 
 type OrderHistory = {
@@ -88,6 +102,7 @@ export default function AccountOrderDetailPage() {
   const orderId = params.orderId;
 
   const [order, setOrder] = useState<Order | null>(null);
+  const [catalog, setCatalog] = useState<CatalogProduct[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -147,6 +162,45 @@ export default function AccountOrderDetailPage() {
     };
   }, [orderId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadCatalog() {
+      try {
+        const response = await fetch(`${API_URL}/products`);
+
+        if (!response.ok) return;
+
+        const data = (await response.json()) as CatalogProduct[];
+
+        if (!cancelled) {
+          setCatalog(data);
+        }
+      } catch (err) {
+        console.error("Unable to load order product images:", err);
+      }
+    }
+
+    void loadCatalog();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const catalogById = useMemo(
+    () => new Map(catalog.map((product) => [product.id, product])),
+    [catalog],
+  );
+
+  const catalogByName = useMemo(
+    () =>
+      new Map(
+        catalog.map((product) => [product.name.trim().toLowerCase(), product]),
+      ),
+    [catalog],
+  );
+
   const timeline = useMemo<TimelineEvent[]>(() => {
     if (!order) return [];
 
@@ -169,12 +223,7 @@ export default function AccountOrderDetailPage() {
     }
 
     for (const item of order.order_status_history ?? []) {
-      // checkout_order already creates the initial pending_payment history row.
-      // "Order placed" above represents that event more clearly for customers,
-      // so do not render it twice.
-      if (item.status === "pending_payment") {
-        continue;
-      }
+      if (item.status === "pending_payment") continue;
 
       events.push({
         key: `status-${item.id}`,
@@ -220,7 +269,7 @@ export default function AccountOrderDetailPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 text-[#25211d] md:pt-10">
         <p className="text-sm text-[#756d65]">Loading order...</p>
       </main>
     );
@@ -228,8 +277,9 @@ export default function AccountOrderDetailPage() {
 
   if (error || !order) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 text-[#25211d] md:pt-10">
         <p className="text-sm text-[#713f38]">{error || "Order not found."}</p>
+
         <Link
           href="/account/orders"
           className="mt-6 inline-block border-b border-[#25211d] pb-1 text-sm"
@@ -244,8 +294,17 @@ export default function AccountOrderDetailPage() {
     ? (order.addresses[0] ?? null)
     : order.addresses;
 
+  function resolveProduct(item: OrderItem) {
+    if (item.product_id) {
+      const product = catalogById.get(item.product_id);
+      if (product) return product;
+    }
+
+    return catalogByName.get(item.product_name.trim().toLowerCase()) ?? null;
+  }
+
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 md:pt-10 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-8 text-[#25211d] md:pt-10">
       <header className="border-b border-[#cec6bc] pb-9">
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
           <Link
@@ -270,11 +329,13 @@ export default function AccountOrderDetailPage() {
             <p className="text-[10px] uppercase tracking-[0.16em] text-[#8a8178]">
               Order detail
             </p>
+
             <h1 className="mt-3 text-4xl font-medium tracking-[-0.04em] md:text-6xl">
-              <span className="!text-[#25211d]">
+              <span className="text-[#4b1f26]">
                 #{order.id.slice(0, 8).toUpperCase()}
               </span>
             </h1>
+
             <p className="mt-3 text-sm text-[#756d65]">
               Placed{" "}
               {new Date(order.created_at).toLocaleDateString("en-MY", {
@@ -304,31 +365,73 @@ export default function AccountOrderDetailPage() {
         <div className="space-y-12">
           <section>
             <SectionLabel>Pieces</SectionLabel>
-            <div className="mt-5 divide-y divide-[#d8d0c7] border-y border-[#cec6bc]">
-              {order.order_items.map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-start justify-between gap-5 py-5"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{item.product_name}</p>
-                    <p className="mt-1 text-xs text-[#817870]">
-                      Qty {item.quantity}
-                      {item.color_name ? ` · ${item.color_name}` : ""}
-                    </p>
-                  </div>
 
-                  <p className="text-sm">
-                    RM{" "}
-                    {(
-                      Number(item.unit_price) * Number(item.quantity)
-                    ).toLocaleString("en-MY", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </p>
-                </div>
-              ))}
+            <div className="mt-5 divide-y divide-[#d8d0c7] border-y border-[#cec6bc]">
+              {order.order_items.map((item) => {
+                const product = resolveProduct(item);
+
+                const content = (
+                  <>
+                    <div className="h-28 w-24 shrink-0 overflow-hidden bg-[#e5dfd6] sm:h-32 sm:w-28">
+                      {product?.primary_image ? (
+                        <img
+                          src={product.primary_image}
+                          alt={item.product_name}
+                          className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.02]"
+                        />
+                      ) : (
+                        <div className="flex h-full items-center justify-center px-3 text-center">
+                          <span className="text-[8px] uppercase tracking-[0.12em] text-[#9a9188]">
+                            Studio MONTRO
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-base font-medium">
+                        {item.product_name}
+                      </p>
+
+                      <p className="mt-2 text-xs text-[#817870]">
+                        Qty {item.quantity}
+                        {item.color_name ? ` · ${item.color_name}` : ""}
+                      </p>
+                    </div>
+
+                    <p className="shrink-0 text-sm">
+                      RM{" "}
+                      {(
+                        Number(item.unit_price) * Number(item.quantity)
+                      ).toLocaleString("en-MY", {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                    </p>
+                  </>
+                );
+
+                if (product?.slug) {
+                  return (
+                    <Link
+                      key={item.id}
+                      href={`/products/${product.slug}`}
+                      className="group flex items-center gap-5 py-5"
+                    >
+                      {content}
+                    </Link>
+                  );
+                }
+
+                return (
+                  <div
+                    key={item.id}
+                    className="group flex items-center gap-5 py-5"
+                  >
+                    {content}
+                  </div>
+                );
+              })}
             </div>
           </section>
 
@@ -390,6 +493,7 @@ export default function AccountOrderDetailPage() {
                 >
                   <div className="relative flex justify-center">
                     <div className="mt-1 h-2 w-2 bg-[#25211d]" />
+
                     {index < timeline.length - 1 && (
                       <div className="absolute top-4 h-[calc(100%+4px)] w-px bg-[#cec6bc]" />
                     )}
@@ -398,6 +502,7 @@ export default function AccountOrderDetailPage() {
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-sm font-medium">{event.label}</p>
+
                       {event.detail && (
                         <p className="mt-1 text-xs leading-5 text-[#756d65]">
                           {event.detail}
@@ -425,6 +530,7 @@ export default function AccountOrderDetailPage() {
           <div className="border-t border-[#25211d]">
             <div className="border-b border-[#cec6bc] py-6">
               <SectionLabel>Payment</SectionLabel>
+
               <div className="mt-4">
                 <CustomerOrderPayment
                   orderId={order.id}
@@ -443,6 +549,7 @@ export default function AccountOrderDetailPage() {
 
               <div className="mt-4 flex justify-between gap-5 text-sm">
                 <span className="text-[#756d65]">Subtotal</span>
+
                 <span>
                   RM{" "}
                   {Number(order.subtotal).toLocaleString("en-MY", {
@@ -454,6 +561,7 @@ export default function AccountOrderDetailPage() {
 
               <div className="mt-4 flex justify-between gap-5 border-t border-[#ddd5cc] pt-4">
                 <span className="text-sm font-medium">Total</span>
+
                 <span className="text-xl font-medium">
                   RM{" "}
                   {Number(order.total).toLocaleString("en-MY", {
@@ -467,9 +575,11 @@ export default function AccountOrderDetailPage() {
             {address && (
               <div className="py-6">
                 <SectionLabel>Delivery address</SectionLabel>
+
                 <p className="mt-4 text-sm font-medium">
                   {address.recipient_name}
                 </p>
+
                 <p className="mt-2 text-sm leading-6 text-[#756d65]">
                   {address.address_line1}
                   {address.address_line2 ? `, ${address.address_line2}` : ""}
@@ -479,6 +589,7 @@ export default function AccountOrderDetailPage() {
                   <br />
                   {address.country}
                 </p>
+
                 <p className="mt-2 text-sm text-[#756d65]">{address.phone}</p>
               </div>
             )}
@@ -489,7 +600,7 @@ export default function AccountOrderDetailPage() {
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <p className="text-[10px] uppercase tracking-[0.14em] text-[#8a8178]">
       {children}

@@ -2,14 +2,14 @@ from fastapi import Header, HTTPException
 from database import supabase
 from typing import Optional
 
-def get_current_user(authorization: str = Header(...)):
+def get_current_user(authorization: Optional[str] = Header(None)):
     """
     从 request header 拿出 JWT，验证它，回传这个 user 是谁
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     
-    token = authorization.replace("Bearer ", "")
+    token = authorization.removeprefix("Bearer ").strip()
     
     try:
         user_response = supabase.auth.get_user(token)

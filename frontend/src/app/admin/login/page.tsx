@@ -1,14 +1,26 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { verifyAdminAccess } from "@/src/lib/adminAuth";
 import { supabase } from "@/src/lib/supabase";
 
-export default function AdminLoginPage() {
+const ACCESS_DENIED_MESSAGE = "This account does not have admin access.";
+const SESSION_EXPIRED_MESSAGE =
+  "Your admin session expired. Please sign in again.";
+
+function AdminLoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(
+    searchParams.get("access") === "denied"
+      ? ACCESS_DENIED_MESSAGE
+      : searchParams.get("reason") === "session_expired"
+        ? SESSION_EXPIRED_MESSAGE
+        : "",
+  );
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -17,7 +29,7 @@ export default function AdminLoginPage() {
     setLoading(true);
     setMessage("");
 
-    const { error } = await supabase.auth.signInWithPassword({
+    const { data, error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
@@ -28,10 +40,23 @@ export default function AdminLoginPage() {
       return;
     }
 
-    setMessage("Login successful");
-    setLoading(false);
+    try {
+      const isAdmin = await verifyAdminAccess(data.session.access_token);
 
-    router.push("/admin/products");
+      if (!isAdmin) {
+        await supabase.auth.signOut({ scope: "local" });
+        setMessage(ACCESS_DENIED_MESSAGE);
+        setLoading(false);
+        return;
+      }
+
+      router.replace("/admin");
+      router.refresh();
+    } catch {
+      await supabase.auth.signOut({ scope: "local" });
+      setMessage("We couldn't verify admin access. Please try again.");
+      setLoading(false);
+    }
   }
 
   return (
@@ -88,5 +113,13 @@ export default function AdminLoginPage() {
         {message && <p className="mt-4 text-sm">{message}</p>}
       </div>
     </main>
+  );
+}
+
+export default function AdminLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <AdminLoginForm />
+    </Suspense>
   );
 }

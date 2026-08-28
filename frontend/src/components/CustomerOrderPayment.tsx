@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangeEvent, useEffect, useState } from "react";
+
 import { authFetch } from "@/src/lib/authFetch";
 import { supabase } from "@/src/lib/supabase";
 
@@ -18,6 +19,9 @@ type Props = {
 };
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+
+const WHATSAPP_NUMBER =
+  process.env.NEXT_PUBLIC_STUDIO_WHATSAPP_NUMBER?.replace(/\D/g, "") ?? "";
 
 export default function CustomerOrderPayment({
   orderId,
@@ -38,6 +42,7 @@ export default function CustomerOrderPayment({
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [autoOpenHandled, setAutoOpenHandled] = useState(false);
   const [currentTimeMs, setCurrentTimeMs] = useState<number | null>(null);
+  const [whatsappOpened, setWhatsappOpened] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -61,6 +66,20 @@ export default function CustomerOrderPayment({
     };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const stored = window.localStorage.getItem(
+        `montro-whatsapp-opened-${orderId}`,
+      );
+
+      setWhatsappOpened(stored === "true");
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [orderId]);
+
   const deadline = new Date(createdAt).getTime() + 24 * 60 * 60 * 1000;
 
   const expired =
@@ -75,6 +94,26 @@ export default function CustomerOrderPayment({
     paymentStatus === "pending" &&
     !paymentProofUrl &&
     !expired;
+
+  const whatsappMessage = [
+    "Hi Studio MONTRO,",
+    "",
+    `I've submitted payment proof for order #${orderId
+      .slice(0, 8)
+      .toUpperCase()}.`,
+    `Order total: RM ${Number(total).toLocaleString("en-MY", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })}.`,
+    "",
+    "Please review it when convenient. Thank you.",
+  ].join("\n");
+
+  const whatsappUrl = WHATSAPP_NUMBER
+    ? `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(
+        whatsappMessage,
+      )}`
+    : null;
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -217,6 +256,16 @@ export default function CustomerOrderPayment({
     setOpen(false);
   }
 
+  function handleWhatsAppNotify() {
+    if (!whatsappUrl) return;
+
+    window.localStorage.setItem(`montro-whatsapp-opened-${orderId}`, "true");
+
+    setWhatsappOpened(true);
+
+    window.open(whatsappUrl, "_blank", "noopener,noreferrer");
+  }
+
   if (status === "cancelled") {
     return null;
   }
@@ -225,6 +274,7 @@ export default function CustomerOrderPayment({
     return (
       <div className="border border-[#9ea794] p-4">
         <p className="text-sm font-medium text-[#485342]">Payment verified</p>
+
         <p className="mt-2 text-xs leading-5 text-[#756d65]">
           Your payment has been confirmed and the order can continue.
         </p>
@@ -235,10 +285,71 @@ export default function CustomerOrderPayment({
   if (paymentProofUrl) {
     return (
       <div className="border border-[#c3bcae] p-4">
-        <p className="text-sm font-medium">Proof received</p>
-        <p className="mt-2 text-xs leading-5 text-[#756d65]">
-          Your payment proof is waiting for studio verification.
-        </p>
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center border border-[#5f6f59] text-[#5f6f59]">
+            ✓
+          </div>
+
+          <div>
+            <p className="text-sm font-medium">Proof received</p>
+
+            <p className="mt-2 text-xs leading-5 text-[#756d65]">
+              Your payment proof is waiting for studio verification.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 border-t border-[#d8d0c7] pt-5">
+          <div className="flex items-start justify-between gap-5">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.12em] text-[#8a8178]">
+                Studio notification
+              </p>
+
+              <div className="mt-2 flex items-center gap-2">
+                <span
+                  className={`h-2 w-2 ${
+                    whatsappOpened ? "bg-[#536d5d]" : "bg-[#9c9289]"
+                  }`}
+                />
+
+                <p className="text-xs text-[#756d65]">
+                  {whatsappOpened ? "WhatsApp opened" : "Not notified yet"}
+                </p>
+              </div>
+            </div>
+
+            {whatsappOpened && (
+              <span className="text-sm text-[#536d5d]">✓</span>
+            )}
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-[#817870]">
+            {whatsappOpened
+              ? "You can open WhatsApp again if you need to follow up with the studio."
+              : "Optionally let Studio MONTRO know that your payment proof is ready for review."}
+          </p>
+
+          {whatsappUrl ? (
+            <button
+              type="button"
+              onClick={handleWhatsAppNotify}
+              className="mt-4 flex w-full items-center justify-between bg-[#536d5d] px-4 py-3.5 text-sm text-[#f4efe7] transition hover:bg-[#486052]"
+            >
+              <span>
+                {whatsappOpened
+                  ? "Open WhatsApp again"
+                  : "Notify studio on WhatsApp"}
+              </span>
+
+              <span>→</span>
+            </button>
+          ) : (
+            <p className="mt-4 border border-[#cec6bc] px-4 py-3 text-xs leading-5 text-[#817870]">
+              WhatsApp contact is not configured yet.
+            </p>
+          )}
+        </div>
       </div>
     );
   }
@@ -249,6 +360,7 @@ export default function CustomerOrderPayment({
         <p className="text-sm font-medium text-[#713f38]">
           Payment window expired
         </p>
+
         <p className="mt-2 text-xs leading-5 text-[#756d65]">
           Payment proof can no longer be submitted. The order will be
           automatically cancelled and reserved stock released.
@@ -285,6 +397,7 @@ export default function CustomerOrderPayment({
             <p className="text-[10px] uppercase tracking-[0.14em] text-[#8a8178]">
               Payment required
             </p>
+
             <p className="mt-1 text-sm text-[#625a53]">
               Complete your bank transfer and submit proof within the payment
               window.
@@ -324,6 +437,7 @@ export default function CustomerOrderPayment({
                     <p className="text-2xl font-medium tracking-[-0.025em]">
                       Complete your bank transfer
                     </p>
+
                     <p className="mt-2 text-sm leading-6 text-[#756d65]">
                       Your order is reserved while we wait for payment proof.
                     </p>
@@ -333,6 +447,7 @@ export default function CustomerOrderPayment({
                     <p className="text-[10px] uppercase tracking-[0.12em] text-[#91877e]">
                       Exact amount
                     </p>
+
                     <p className="mt-1 text-xl font-medium">
                       RM{" "}
                       {Number(total).toLocaleString("en-MY", {
@@ -406,6 +521,7 @@ export default function CustomerOrderPayment({
                     <p className="text-sm font-medium">
                       {proofFile ? proofFile.name : "Choose payment proof"}
                     </p>
+
                     <p className="mt-2 text-xs text-[#8a8178]">
                       JPG, PNG, WEBP or PDF · Max 10MB
                     </p>
@@ -428,6 +544,7 @@ export default function CustomerOrderPayment({
                         ? "Submitting payment proof..."
                         : "Submit payment proof"}
                     </span>
+
                     <span>→</span>
                   </button>
 

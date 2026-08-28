@@ -363,7 +363,7 @@ export default function AdminOrderDetailPage() {
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-28 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-5 pb-24 pt-24 text-[#25211d] md:px-8 lg:pt-10">
         <p className="text-sm text-[#746c64]">Loading order...</p>
       </main>
     );
@@ -371,7 +371,7 @@ export default function AdminOrderDetailPage() {
 
   if (error || !order) {
     return (
-      <main className="min-h-screen bg-[#f4f0e9] px-8 pb-24 pt-28 text-[#25211d]">
+      <main className="min-h-screen bg-[#f4f0e9] px-5 pb-24 pt-24 text-[#25211d] md:px-8 lg:pt-10">
         <p className="text-sm text-[#8b3a34]">{error || "Order not found."}</p>
 
         <Link
@@ -395,7 +395,7 @@ export default function AdminOrderDetailPage() {
     Boolean(order.payment_proof_url);
 
   return (
-    <main className="min-h-screen bg-[#f4f0e9] px-8 pb-28 pt-28 text-[#25211d]">
+    <main className="min-h-screen bg-[#f4f0e9] px-5 pb-28 pt-24 text-[#25211d] md:px-8 lg:pt-10">
       <div className="border-b border-[#cec6bc] pb-8">
         <Link
           href="/admin/orders"
