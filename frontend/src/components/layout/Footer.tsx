@@ -31,20 +31,20 @@ const SHOP_LINKS = [
 
 const ROOM_LINKS = [
   {
+    label: "Kids' Room",
+    href: "/products?room=kids-room",
+  },
+  {
+    label: "Green Space",
+    href: "/products?room=outdoor",
+  },
+  {
     label: "Living Room",
     href: "/products?room=living-room",
   },
   {
-    label: "Dining Room",
-    href: "/products?room=dining-room",
-  },
-  {
-    label: "Bedroom",
-    href: "/products?room=bedroom",
-  },
-  {
-    label: "Workspace",
-    href: "/products?room=workspace",
+    label: "Kitchen",
+    href: "/products?room=kitchen",
   },
 ];
 
@@ -158,7 +158,7 @@ export default function Footer() {
               className="
                 mt-6
                 max-w-[520px]
-                text-[clamp(2.4rem,4.2vw,4.8rem)]
+                text-[clamp(2.4rem,4vw,4.3rem)]
                 font-normal
                 leading-[0.94]
                 tracking-[-0.045em]

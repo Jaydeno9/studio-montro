@@ -41,7 +41,7 @@ type EditableProductSnapshot = {
   status: ProductStatus;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 export default function ManageProductPage() {
   const router = useRouter();

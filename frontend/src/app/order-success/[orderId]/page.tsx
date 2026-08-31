@@ -41,7 +41,7 @@ type Order = {
   order_items: OrderItem[];
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 const MONTRO_WHATSAPP =
   process.env.NEXT_PUBLIC_MONTRO_WHATSAPP ?? "601110620470";

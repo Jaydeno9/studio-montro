@@ -63,7 +63,13 @@ function LoginForm() {
         throw error;
       }
 
-      const isAdmin = await verifyAdminAccess(data.session.access_token);
+      let isAdmin = false;
+
+      try {
+        isAdmin = await verifyAdminAccess(data.session.access_token);
+      } catch (adminCheckError) {
+        console.error("Admin access check failed:", adminCheckError);
+      }
 
       if (isAdmin) {
         router.replace("/admin");

@@ -3,6 +3,7 @@ from typing import Optional, Literal
 from database import supabase
 from pydantic import BaseModel, ConfigDict, Field
 from auth import get_current_user, get_current_user_optional
+import os
 import re
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
@@ -10,14 +11,24 @@ from datetime import datetime, timedelta, timezone
 
 # ---------- App 初始化（一定要在所有 @app.xxx 之前） ----------
 app = FastAPI(title="STUDIO MONTRO API", version="0.1.0")
+
+local_frontend_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+]
+configured_frontend_origins = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-    ],
+    allow_origins=list(dict.fromkeys(
+        local_frontend_origins + configured_frontend_origins
+    )),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

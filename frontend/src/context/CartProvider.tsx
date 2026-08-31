@@ -13,8 +13,7 @@ import { authFetch } from "@/src/lib/authFetch";
 import { supabase } from "@/src/lib/supabase";
 import { requestAuthPrompt } from "@/src/components/AuthRequiredPrompt";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 export type CartItem = {
   id: string;

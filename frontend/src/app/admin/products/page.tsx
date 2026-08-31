@@ -43,7 +43,7 @@ type SortOption =
   | "price_asc"
   | "price_desc";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 const LOW_STOCK_THRESHOLD = 5;
 

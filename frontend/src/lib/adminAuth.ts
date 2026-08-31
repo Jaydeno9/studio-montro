@@ -1,4 +1,4 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 export async function verifyAdminAccess(accessToken: string): Promise<boolean> {
   const response = await fetch(`${API_URL}/admin/me`, {
@@ -22,4 +22,3 @@ export async function verifyAdminAccess(accessToken: string): Promise<boolean> {
   const data = await response.json().catch(() => null);
   return data?.is_admin === true;
 }
-

@@ -89,7 +89,7 @@ type Order = {
   order_cancellation_requests: AdminCancellationRequest[];
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 const STATUS_LABELS: Record<Order["status"], string> = {
   pending_payment: "Pending payment",

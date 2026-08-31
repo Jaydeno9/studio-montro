@@ -5,8 +5,7 @@ import { supabase } from "@/src/lib/supabase";
 import { authFetch } from "@/src/lib/authFetch";
 import { requestAuthPrompt } from "@/src/components/AuthRequiredPrompt";
 
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 type SavedProductResponse = {
   saved_id: string;

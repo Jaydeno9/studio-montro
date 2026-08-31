@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/src/lib/supabase";
@@ -15,50 +15,62 @@ function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const returnTo = getSafeReturnTo(searchParams.get("returnTo"), "/login");
+  const recoveryCode = searchParams.get("code");
   const [status, setStatus] = useState<
     "checking" | "ready" | "invalid" | "success"
-  >("checking");
+  >(recoveryCode ? "checking" : "invalid");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const exchangeStarted = useRef(false);
   const passwordError =
     error === "Password must meet all four requirements." ? error : undefined;
   const confirmationError =
     error === "Passwords do not match." ? error : undefined;
 
   useEffect(() => {
-    let active = true;
-    const recoveryLink =
-      window.location.hash.includes("type=recovery") ||
-      searchParams.get("type") === "recovery" ||
-      searchParams.has("code");
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (active && event === "PASSWORD_RECOVERY" && session)
-          setStatus("ready");
-      },
-    );
+    if (exchangeStarted.current) return;
+    exchangeStarted.current = true;
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      if (recoveryLink && data.session) setStatus("ready");
-      else
-        window.setTimeout(
-          () =>
-            active &&
-            setStatus((current) =>
-              current === "checking" ? "invalid" : current,
-            ),
-          800,
-        );
-    });
+    function cleanRecoveryUrl() {
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete("code");
+      cleanUrl.searchParams.delete("error");
+      cleanUrl.searchParams.delete("error_code");
+      cleanUrl.searchParams.delete("error_description");
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${cleanUrl.pathname}${cleanUrl.search}`,
+      );
+    }
 
-    return () => {
-      active = false;
-      listener.subscription.unsubscribe();
-    };
-  }, [searchParams]);
+    if (!recoveryCode) {
+      cleanRecoveryUrl();
+      return;
+    }
+
+    async function initializeRecovery(authCode: string) {
+      try {
+        const { data, error } =
+          await supabase.auth.exchangeCodeForSession(authCode);
+
+        if (error || !data.session) {
+          setStatus("invalid");
+          return;
+        }
+
+        setStatus("ready");
+      } catch {
+        setStatus("invalid");
+      } finally {
+        cleanRecoveryUrl();
+      }
+    }
+
+    void initializeRecovery(recoveryCode);
+  }, [recoveryCode, searchParams]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

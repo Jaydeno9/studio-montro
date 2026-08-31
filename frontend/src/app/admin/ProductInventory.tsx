@@ -31,7 +31,7 @@ type ProductInventoryProps = {
   onStockChanged: (newStock: number) => void;
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+import { API_URL } from "@/src/lib/apiConfig";
 
 const reasonLabels: Record<AdjustmentReason, string> = {
   restock: "Restock",
