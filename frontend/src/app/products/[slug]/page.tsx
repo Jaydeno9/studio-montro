@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useSavedProducts } from "@/src/hooks/useSavedProducts";
 import { useCart } from "@/src/hooks/useCart";
+import { API_URL } from "@/src/lib/apiConfig";
 
 type ProductColor = {
   id: string;
@@ -53,8 +54,6 @@ type ProductDetail = {
   colors: ProductColor[];
 };
 
-import { API_URL } from "@/src/lib/apiConfig";
-
 export default function ProductDetailPage() {
   const params = useParams<{ slug: string }>();
 
@@ -77,6 +76,7 @@ export default function ProductDetailPage() {
   const [recommendedQuickAddId, setRecommendedQuickAddId] = useState<
     string | null
   >(null);
+
   const [recommendedColorId, setRecommendedColorId] = useState<string | null>(
     null,
   );
@@ -167,12 +167,15 @@ export default function ProductDetailPage() {
         if (!cancelled) {
           setAllProducts(products);
           setProduct(normalizedProduct);
+
           setSelectedImage(sortedImages.length > 0 ? sortedImages[0] : null);
+
           setSelectedColor(
             normalizedProduct.colors.length > 0
               ? normalizedProduct.colors[0]
               : null,
           );
+
           setQuantity(1);
         }
       } catch (err) {
@@ -195,6 +198,7 @@ export default function ProductDetailPage() {
     if (slug) {
       void loadProduct();
     }
+
     return () => {
       cancelled = true;
     };
@@ -354,8 +358,7 @@ export default function ProductDetailPage() {
       {/* MAIN PRODUCT LAYOUT */}
       <section className="grid items-start gap-10 px-8 pb-24 lg:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.72fr)] lg:gap-14">
         {/* GALLERY */}
-        {/* GALLERY */}
-        <div className="min-w-0 xl:sticky xl:top-[138px] xl:max-h-[calc(100dvh-154px)] xl:self-start xl:overflow-y-auto">
+        <div className="min-w-0 xl:sticky xl:top-[138px] xl:self-start">
           {product.images.length > 0 ? (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {product.images.map((image, index) => (
@@ -363,12 +366,12 @@ export default function ProductDetailPage() {
                   key={image.id}
                   type="button"
                   onClick={() => setSelectedImage(image)}
-                  className="group relative overflow-hidden bg-[#e6dfd5]"
+                  className="relative overflow-hidden bg-[#e6dfd5]"
                 >
                   <img
                     src={image.image_url}
                     alt={`${product.name} view ${index + 1}`}
-                    className="aspect-[4/5] h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-[1.01]"
+                    className="aspect-[4/5] h-full w-full object-cover"
                   />
 
                   {index === 0 && (
@@ -389,7 +392,7 @@ export default function ProductDetailPage() {
         </div>
 
         {/* PRODUCT PANEL */}
-        <aside className="min-w-0">
+        <aside className="min-w-0 xl:sticky xl:top-[138px] xl:self-start">
           <div className="border-b border-[#cec6bc] pb-7">
             {product.category && (
               <p className="text-[11px] uppercase tracking-[0.17em] text-[#8a8178]">
@@ -414,6 +417,7 @@ export default function ProductDetailPage() {
             <div className="border-b border-[#cec6bc] py-6">
               <div className="mb-4 flex items-center justify-between">
                 <p className="text-sm text-[#514b45]">Finish</p>
+
                 <p className="text-sm text-[#756c64]">
                   {selectedColor?.color_name ?? "Standard"}
                 </p>
@@ -451,6 +455,7 @@ export default function ProductDetailPage() {
           <div className="border-b border-[#cec6bc] py-6">
             <div className="flex items-center justify-between">
               <p className="text-sm text-[#756c64]">Availability</p>
+
               <p className="text-sm text-[#25211d]">
                 {product.stock_quantity > 0
                   ? `${product.stock_quantity} in stock`
@@ -587,6 +592,7 @@ export default function ProductDetailPage() {
                 <p className="text-sm font-medium text-[#25211d]">
                   Malaysia delivery within 2–5 working days
                 </p>
+
                 <p className="mt-1 text-xs leading-5 text-[#7d746b]">
                   Dispatch timing may vary for low-stock pieces.
                 </p>
@@ -670,6 +676,7 @@ export default function ProductDetailPage() {
                 className="flex items-center gap-3 border-t border-[#cec6bc] py-4 text-[#514b45]"
               >
                 <span className="shrink-0">{item.icon}</span>
+
                 <p className="text-sm">{item.label}</p>
               </div>
             ))}
@@ -685,6 +692,7 @@ export default function ProductDetailPage() {
               <span className="text-[13px] font-medium uppercase tracking-[0.08em] text-[#25211d]">
                 Description
               </span>
+
               <span className="text-lg font-light text-[#6f675f]">
                 {descriptionOpen ? "−" : "+"}
               </span>
@@ -709,6 +717,7 @@ export default function ProductDetailPage() {
               <span className="text-[13px] font-medium uppercase tracking-[0.08em] text-[#25211d]">
                 Details
               </span>
+
               <span className="text-lg font-light text-[#6f675f]">
                 {detailsOpen ? "−" : "+"}
               </span>
@@ -719,6 +728,7 @@ export default function ProductDetailPage() {
                 {product.material && (
                   <div className="grid grid-cols-[110px_1fr] gap-4">
                     <span className="text-sm text-[#8a8178]">Material</span>
+
                     <span className="text-sm text-[#25211d]">
                       {product.material}
                     </span>
@@ -728,6 +738,7 @@ export default function ProductDetailPage() {
                 {product.dimensions && (
                   <div className="grid grid-cols-[110px_1fr] gap-4">
                     <span className="text-sm text-[#8a8178]">Dimensions</span>
+
                     <span className="text-sm text-[#25211d]">
                       {product.dimensions}
                     </span>
@@ -736,6 +747,7 @@ export default function ProductDetailPage() {
 
                 <div className="grid grid-cols-[110px_1fr] gap-4">
                   <span className="text-sm text-[#8a8178]">Finish</span>
+
                   <span className="text-sm text-[#25211d]">
                     {selectedColor?.color_name ?? "Standard"}
                   </span>
@@ -754,6 +766,7 @@ export default function ProductDetailPage() {
               <span className="text-[13px] font-medium uppercase tracking-[0.08em] text-[#25211d]">
                 Delivery & Return
               </span>
+
               <span className="text-lg font-light text-[#6f675f]">
                 {deliveryOpen ? "−" : "+"}
               </span>
@@ -765,6 +778,7 @@ export default function ProductDetailPage() {
                   Delivery within Malaysia typically takes 2–5 working days
                   after dispatch.
                 </p>
+
                 <p>
                   Returns are accepted within 14 days for unused items in their
                   original condition and packaging.
@@ -822,6 +836,7 @@ export default function ProductDetailPage() {
                         onClick={(event) => {
                           event.preventDefault();
                           event.stopPropagation();
+
                           void toggleSaved(item.id);
                         }}
                         disabled={itemSaveBusy}
@@ -916,6 +931,7 @@ export default function ProductDetailPage() {
                       </div>
                     )}
                   </div>
+
                   <div className="mt-5 border-t border-[#cfc7bd] pt-3">
                     {recommendedQuickAddId === item.id ? (
                       <div>
@@ -958,6 +974,7 @@ export default function ProductDetailPage() {
                                     backgroundColor: color.color_hex,
                                   }}
                                 />
+
                                 {color.color_name}
                               </button>
                             );
@@ -979,6 +996,7 @@ export default function ProductDetailPage() {
                               ? "Adding..."
                               : "Add selected finish"}
                           </span>
+
                           <span className="text-base font-light">+</span>
                         </button>
                       </div>
@@ -1017,6 +1035,7 @@ export default function ProductDetailPage() {
           </p>
         )}
       </section>
+
       {(cartMessage || saveMessage) && (
         <div className="fixed bottom-6 right-6 z-50 max-w-[340px] border border-[#cfc7bd] bg-[#f4f0e9]/95 px-5 py-4 shadow-[0_10px_35px_rgba(37,33,29,0.12)] backdrop-blur-md">
           <div className="flex items-start gap-3">
