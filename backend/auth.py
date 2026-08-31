@@ -1,5 +1,5 @@
 from fastapi import Header, HTTPException
-from database import supabase
+from .database import supabase
 from typing import Optional
 
 def get_current_user(authorization: Optional[str] = Header(None)):
