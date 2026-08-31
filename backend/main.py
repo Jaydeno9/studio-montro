@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException, Depends
 from typing import Optional, Literal
-from database import supabase
+from .database import supabase
 from pydantic import BaseModel, ConfigDict, Field
-from auth import get_current_user, get_current_user_optional
+from .auth import get_current_user, get_current_user_optional
 import os
 import re
 from fastapi.middleware.cors import CORSMiddleware
