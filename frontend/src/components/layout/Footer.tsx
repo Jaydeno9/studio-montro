@@ -1,35 +1,25 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { API_URL } from "@/src/lib/apiConfig";
 import { supabase } from "@/src/lib/supabase";
 
-const SHOP_LINKS = [
-  {
-    label: "Furniture",
-    href: "/products?category=furniture",
-  },
-  {
-    label: "Seating",
-    href: "/products?category=seating",
-  },
-  {
-    label: "Tables",
-    href: "/products?category=tables",
-  },
-  {
-    label: "Lighting",
-    href: "/products?category=lighting",
-  },
-  {
-    label: "Decor",
-    href: "/products?category=decor",
-  },
-];
+type StorefrontCategory = {
+  id: string;
+  name: string;
+  slug: string;
+  active_product_count: number;
+};
 
-const ROOM_LINKS = [
+type NavigationItem = {
+  label: string;
+  href: string;
+};
+
+const ROOM_LINKS: NavigationItem[] = [
   {
     label: "Kids' Room",
     href: "/products?room=kids-room",
@@ -48,7 +38,7 @@ const ROOM_LINKS = [
   },
 ];
 
-const GUEST_LINKS = [
+const GUEST_LINKS: NavigationItem[] = [
   {
     label: "Sign in",
     href: "/login",
@@ -57,15 +47,11 @@ const GUEST_LINKS = [
     label: "Create account",
     href: "/signup",
   },
-  {
-    label: "Cart",
-    href: "/cart",
-  },
 ];
 
-const USER_LINKS = [
+const USER_LINKS: NavigationItem[] = [
   {
-    label: "Overview",
+    label: "Account overview",
     href: "/account",
   },
   {
@@ -76,53 +62,112 @@ const USER_LINKS = [
     label: "Addresses",
     href: "/account/addresses",
   },
-  {
-    label: "Saved pieces",
-    href: "/saved",
-  },
-  {
-    label: "Cart",
-    href: "/cart",
-  },
 ];
 
 export default function Footer() {
   const pathname = usePathname();
+  const router = useRouter();
 
-  const [loggedIn, setLoggedIn] = useState(false);
+  const [categoryLinks, setCategoryLinks] = useState<NavigationItem[]>([]);
+  const [categoriesReady, setCategoriesReady] = useState(false);
+
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
+  const hideFooter = pathname?.startsWith("/admin");
+
+  /*
+   * Keep footer categories in sync with Navbar.
+   * Same endpoint, same active-product rule, same generated href.
+   */
   useEffect(() => {
-    let active = true;
+    if (hideFooter) {
+      return;
+    }
 
-    void supabase.auth.getSession().then(({ data }) => {
-      if (!active) {
-        return;
+    let cancelled = false;
+
+    async function loadCategories() {
+      try {
+        const response = await fetch(`${API_URL}/categories`);
+
+        if (!response.ok) {
+          throw new Error("Unable to load categories.");
+        }
+
+        const data = (await response.json()) as StorefrontCategory[];
+
+        if (!cancelled) {
+          setCategoryLinks(
+            data
+              .filter((category) => category.active_product_count > 0)
+              .map((category) => ({
+                label: category.name,
+                href: `/products?category=${encodeURIComponent(category.slug)}`,
+              })),
+          );
+        }
+      } catch (error) {
+        console.error("Unable to load footer categories:", error);
+      } finally {
+        if (!cancelled) {
+          setCategoriesReady(true);
+        }
       }
+    }
 
-      setLoggedIn(Boolean(data.session));
-      setAuthReady(true);
-    });
+    void loadCategories();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hideFooter]);
+
+  /*
+   * Keep footer auth state in sync with Navbar.
+   */
+  useEffect(() => {
+    let cancelled = false;
+
+    async function syncUser() {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!cancelled) {
+        setUserEmail(session?.user?.email ?? null);
+        setAuthReady(true);
+      }
+    }
+
+    void syncUser();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      setLoggedIn(Boolean(session));
+      setUserEmail(session?.user?.email ?? null);
       setAuthReady(true);
     });
 
     return () => {
-      active = false;
+      cancelled = true;
       subscription.unsubscribe();
     };
   }, []);
 
-  if (pathname?.startsWith("/admin")) {
+  async function handleLogout() {
+    await supabase.auth.signOut();
+
+    router.replace("/");
+    router.refresh();
+  }
+
+  if (hideFooter) {
     return null;
   }
 
   const year = new Date().getFullYear();
-
+  const loggedIn = Boolean(userEmail);
   const accountLinks = loggedIn ? USER_LINKS : GUEST_LINKS;
 
   return (
@@ -189,13 +234,24 @@ export default function Footer() {
 
           {/* Shop */}
           <FooterColumn title="Shop">
-            {SHOP_LINKS.map((link) => (
-              <FooterLink key={link.href} href={link.href}>
-                {link.label}
-              </FooterLink>
-            ))}
+            {!categoriesReady ? (
+              <>
+                <FooterPlaceholder />
+                <FooterPlaceholder />
+                <FooterPlaceholder />
+                <FooterPlaceholder />
+              </>
+            ) : (
+              categoryLinks.map((link) => (
+                <FooterLink key={link.href} href={link.href}>
+                  {link.label}
+                </FooterLink>
+              ))
+            )}
 
-            <FooterLink href="/products">View all</FooterLink>
+            <FooterLink href="/products?sort=newest">New</FooterLink>
+
+            <FooterLink href="/products">Shop all</FooterLink>
           </FooterColumn>
 
           {/* Rooms */}
@@ -216,11 +272,19 @@ export default function Footer() {
                 <FooterPlaceholder />
               </>
             ) : (
-              accountLinks.map((link) => (
-                <FooterLink key={link.href} href={link.href}>
-                  {link.label}
-                </FooterLink>
-              ))
+              <>
+                {accountLinks.map((link) => (
+                  <FooterLink key={link.href} href={link.href}>
+                    {link.label}
+                  </FooterLink>
+                ))}
+
+                {loggedIn && (
+                  <FooterButton onClick={() => void handleLogout()}>
+                    Sign out
+                  </FooterButton>
+                )}
+              </>
             )}
           </FooterColumn>
         </div>
@@ -293,39 +357,6 @@ export default function Footer() {
           </button>
         </div>
       </section>
-
-      {/* <section className="border-b border-[#f4efe7]/15">
-        <div
-          className="
-            relative
-            h-[180px]
-            bg-cover
-            bg-center
-
-            sm:h-[210px]
-            md:h-[240px]
-            lg:h-[280px]
-          "
-          style={{
-            backgroundImage: "url('/hero-livingroom.jpeg')",
-          }}
-        >
-          <div className="absolute inset-0 bg-[#4b1f26]/10" />
-
-          <div
-            className="
-              absolute
-              inset-0
-              bg-gradient-to-r
-              from-[#4b1f26]/18
-              via-transparent
-              to-[#4b1f26]/8
-            "
-          />
-
-          <div className="absolute inset-0 bg-gradient-to-t from-black/12 via-transparent to-transparent" />
-        </div>
-      </section> */}
 
       <style>{`
         .montro-marquee {
@@ -466,6 +497,33 @@ function FooterLink({ href, children }: { href: string; children: ReactNode }) {
     >
       {children}
     </Link>
+  );
+}
+
+function FooterButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="
+        cursor-pointer
+        text-left
+        text-sm
+        tracking-[-0.01em]
+        text-[#f4efe7]/62
+        transition-colors
+        duration-300
+        hover:text-[#f4efe7]
+      "
+    >
+      {children}
+    </button>
   );
 }
 
