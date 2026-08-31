@@ -4,11 +4,12 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
-import { adminFetch } from "@/src/lib/adminFetch";
 import ProductColors from "@/src/app/admin/ProductColors";
 import ProductImages from "@/src/app/admin/ProductImages";
 import ProductInventory from "@/src/app/admin/ProductInventory";
 import { useAdminUnsavedChanges } from "@/src/context/AdminUnsavedChangesProvider";
+import { adminFetch } from "@/src/lib/adminFetch";
+import { API_URL } from "@/src/lib/apiConfig";
 
 type Category = {
   id: string;
@@ -40,8 +41,6 @@ type EditableProductSnapshot = {
   categoryId: string;
   status: ProductStatus;
 };
-
-import { API_URL } from "@/src/lib/apiConfig";
 
 export default function ManageProductPage() {
   const router = useRouter();
@@ -90,7 +89,6 @@ export default function ManageProductPage() {
           }
 
           const product: Product = await productResponse.json();
-
           const categoryData: Category[] = await categoriesResponse.json();
 
           if (cancelled) {
@@ -347,9 +345,11 @@ export default function ManageProductPage() {
             <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[#756d65]">
               <RectStatus>{status}</RectStatus>
               <span>{slug}</span>
+
               {isDirty && (
                 <>
                   <span className="text-[#aaa198]">·</span>
+
                   <span className="font-medium text-[#713f38]">
                     Unsaved changes
                   </span>
@@ -370,88 +370,198 @@ export default function ManageProductPage() {
         </div>
       </header>
 
-      <form
-        onSubmit={handleSubmit}
-        className="grid gap-10 pt-10 xl:grid-cols-[minmax(0,1fr)_360px]"
-      >
+      {/* ======================================================
+          PAGE GRID
+
+          IMPORTANT:
+          The grid is now a DIV, not a FORM.
+
+          This prevents ProductInventory, ProductColors and
+          ProductImages from becoming nested forms.
+          ====================================================== */}
+      <div className="grid gap-10 pt-10 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-10">
-          <FormSection
-            number="01"
-            title="Basic information"
-            description="Edit the customer-facing identity and description."
+          {/* ==================================================
+              GENERAL PRODUCT DETAILS FORM
+
+              Only the fields saved by handleSubmit live here.
+              ================================================== */}
+          <form
+            id="product-details-form"
+            onSubmit={handleSubmit}
+            className="space-y-10"
           >
-            <div className="grid gap-5 md:grid-cols-2">
-              <Field label="Product name" required htmlFor="name">
-                <input
-                  id="name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  required
-                  className={inputClass}
-                />
-              </Field>
-
-              <Field
-                label="Slug"
-                htmlFor="slug"
-                hint="Slug editing remains disabled to avoid breaking existing product URLs."
-              >
-                <input
-                  id="slug"
-                  value={slug}
-                  readOnly
-                  className={`${inputClass} cursor-not-allowed bg-[#ebe5dc] text-[#8b827a]`}
-                />
-              </Field>
-            </div>
-
-            <Field label="Description" htmlFor="description">
-              <textarea
-                id="description"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                rows={6}
-                className={`${inputClass} h-auto resize-none py-3`}
-              />
-            </Field>
-          </FormSection>
-
-          <FormSection
-            number="02"
-            title="Pricing"
-            description="Update the customer-facing selling price."
-          >
-            <Field
-              label="Price"
-              required
-              htmlFor="price"
-              hint="Malaysian Ringgit"
+            <FormSection
+              number="01"
+              title="Basic information"
+              description="Edit the customer-facing identity and description."
             >
-              <div className="flex border border-[#b8aea4] bg-[#f8f4ee]">
-                <span className="flex items-center border-r border-[#cfc7bd] px-4 text-sm text-[#756d65]">
-                  RM
-                </span>
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="Product name" required htmlFor="name">
+                  <input
+                    id="name"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    required
+                    className={inputClass}
+                  />
+                </Field>
 
-                <input
-                  id="price"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={price}
-                  onChange={(event) => setPrice(event.target.value)}
-                  required
-                  className="h-12 w-full bg-transparent px-4 text-sm outline-none"
-                />
+                <Field
+                  label="Slug"
+                  htmlFor="slug"
+                  hint="Slug editing remains disabled to avoid breaking existing product URLs."
+                >
+                  <input
+                    id="slug"
+                    value={slug}
+                    readOnly
+                    className={`${inputClass} cursor-not-allowed bg-[#ebe5dc] text-[#8b827a]`}
+                  />
+                </Field>
               </div>
-            </Field>
-          </FormSection>
 
+              <Field label="Description" htmlFor="description">
+                <textarea
+                  id="description"
+                  value={description}
+                  onChange={(event) => setDescription(event.target.value)}
+                  rows={6}
+                  className={`${inputClass} h-auto resize-none py-3`}
+                />
+              </Field>
+            </FormSection>
+
+            <FormSection
+              number="02"
+              title="Pricing"
+              description="Update the customer-facing selling price."
+            >
+              <Field
+                label="Price"
+                required
+                htmlFor="price"
+                hint="Malaysian Ringgit"
+              >
+                <div className="flex border border-[#b8aea4] bg-[#f8f4ee]">
+                  <span className="flex items-center border-r border-[#cfc7bd] px-4 text-sm text-[#756d65]">
+                    RM
+                  </span>
+
+                  <input
+                    id="price"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={price}
+                    onChange={(event) => setPrice(event.target.value)}
+                    required
+                    className="h-12 w-full bg-transparent px-4 text-sm outline-none"
+                  />
+                </div>
+              </Field>
+            </FormSection>
+
+            <FormSection
+              number="03"
+              title="Product details"
+              description="Specifications shown to customers."
+            >
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="Material" htmlFor="material">
+                  <input
+                    id="material"
+                    value={material}
+                    onChange={(event) => setMaterial(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+
+                <Field label="Dimensions" htmlFor="dimensions">
+                  <input
+                    id="dimensions"
+                    value={dimensions}
+                    onChange={(event) => setDimensions(event.target.value)}
+                    className={inputClass}
+                  />
+                </Field>
+              </div>
+            </FormSection>
+
+            <FormSection
+              number="04"
+              title="Organisation"
+              description="Control category placement and storefront visibility."
+            >
+              <div className="grid gap-5 md:grid-cols-2">
+                <Field label="Category" htmlFor="category">
+                  <select
+                    id="category"
+                    value={categoryId}
+                    onChange={(event) => setCategoryId(event.target.value)}
+                    className={inputClass}
+                  >
+                    <option value="">No category</option>
+
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field
+                  label="Status"
+                  htmlFor="status"
+                  hint={
+                    status === "active"
+                      ? "Visible on the storefront"
+                      : "Hidden from the storefront"
+                  }
+                >
+                  <select
+                    id="status"
+                    value={status}
+                    onChange={(event) =>
+                      setStatus(event.target.value as ProductStatus)
+                    }
+                    className={inputClass}
+                  >
+                    <option value="active">Active</option>
+                    <option value="inactive">Inactive</option>
+                  </select>
+                </Field>
+              </div>
+            </FormSection>
+
+            {message && (
+              <div
+                className={`border px-5 py-4 text-sm leading-6 ${
+                  isError
+                    ? "border-[#ad7d74] bg-[#f2e7e3] text-[#713f38]"
+                    : "border-[#a9b09f] bg-[#edf0e8] text-[#485342]"
+                }`}
+              >
+                {message}
+              </div>
+            )}
+          </form>
+
+          {/* ==================================================
+              INVENTORY
+
+              Independent component.
+              OUTSIDE product-details-form.
+              ================================================== */}
           <section className="border-t border-[#cec6bc] pt-6">
             <div className="mb-7">
               <p className="text-[10px] uppercase tracking-[0.15em] text-[#91877e]">
-                03
+                05
               </p>
+
               <p className="mt-2 text-lg font-medium">Inventory</p>
+
               <p className="mt-2 max-w-2xl text-xs leading-5 text-[#817870]">
                 Adjust stock deliberately instead of editing the raw quantity
                 inside the general product form.
@@ -465,97 +575,20 @@ export default function ManageProductPage() {
             />
           </section>
 
-          <FormSection
-            number="04"
-            title="Product details"
-            description="Specifications shown to customers."
-          >
-            <div className="grid gap-5 md:grid-cols-2">
-              <Field label="Material" htmlFor="material">
-                <input
-                  id="material"
-                  value={material}
-                  onChange={(event) => setMaterial(event.target.value)}
-                  className={inputClass}
-                />
-              </Field>
+          {/* ==================================================
+              COLOURS
 
-              <Field label="Dimensions" htmlFor="dimensions">
-                <input
-                  id="dimensions"
-                  value={dimensions}
-                  onChange={(event) => setDimensions(event.target.value)}
-                  className={inputClass}
-                />
-              </Field>
-            </div>
-          </FormSection>
-
-          <FormSection
-            number="05"
-            title="Organisation"
-            description="Control category placement and storefront visibility."
-          >
-            <div className="grid gap-5 md:grid-cols-2">
-              <Field label="Category" htmlFor="category">
-                <select
-                  id="category"
-                  value={categoryId}
-                  onChange={(event) => setCategoryId(event.target.value)}
-                  className={inputClass}
-                >
-                  <option value="">No category</option>
-
-                  {categories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <Field
-                label="Status"
-                htmlFor="status"
-                hint={
-                  status === "active"
-                    ? "Visible on the storefront"
-                    : "Hidden from the storefront"
-                }
-              >
-                <select
-                  id="status"
-                  value={status}
-                  onChange={(event) =>
-                    setStatus(event.target.value as ProductStatus)
-                  }
-                  className={inputClass}
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </Field>
-            </div>
-          </FormSection>
-
-          {message && (
-            <div
-              className={`border px-5 py-4 text-sm leading-6 ${
-                isError
-                  ? "border-[#ad7d74] bg-[#f2e7e3] text-[#713f38]"
-                  : "border-[#a9b09f] bg-[#edf0e8] text-[#485342]"
-              }`}
-            >
-              {message}
-            </div>
-          )}
-
+              ProductColors owns its own <form>.
+              It is no longer nested inside another form.
+              ================================================== */}
           <section className="border-t border-[#cec6bc] pt-10">
             <div className="mb-7">
               <p className="text-[10px] uppercase tracking-[0.15em] text-[#91877e]">
                 06
               </p>
+
               <p className="mt-2 text-lg font-medium">Colours & finishes</p>
+
               <p className="mt-2 max-w-2xl text-xs leading-5 text-[#817870]">
                 Add or remove the finishes available to customers.
               </p>
@@ -564,12 +597,20 @@ export default function ManageProductPage() {
             <ProductColors productId={productId} />
           </section>
 
+          {/* ==================================================
+              IMAGES
+
+              ProductImages owns its own <form>.
+              It is no longer nested inside another form.
+              ================================================== */}
           <section className="border-t border-[#cec6bc] pt-10">
             <div className="mb-7">
               <p className="text-[10px] uppercase tracking-[0.15em] text-[#91877e]">
                 07
               </p>
+
               <p className="mt-2 text-lg font-medium">Product images</p>
+
               <p className="mt-2 max-w-2xl text-xs leading-5 text-[#817870]">
                 Add, remove, reorder and choose the primary image.
               </p>
@@ -579,6 +620,14 @@ export default function ManageProductPage() {
           </section>
         </div>
 
+        {/* ====================================================
+            SIDEBAR
+
+            Sidebar is also outside the product form.
+
+            The Save button targets product-details-form using
+            the HTML "form" attribute.
+            ==================================================== */}
         <aside className="xl:sticky xl:top-8 xl:self-start">
           <div className="border-t border-[#25211d]">
             <div className="border-b border-[#cec6bc] py-5">
@@ -628,6 +677,7 @@ export default function ManageProductPage() {
             <div className="py-6">
               <button
                 type="submit"
+                form="product-details-form"
                 disabled={!canSave}
                 className="flex w-full items-center justify-between bg-[#25211d] px-5 py-4 text-sm text-[#f4f0e9] transition hover:bg-[#39332d] disabled:cursor-not-allowed disabled:opacity-35"
               >
@@ -654,13 +704,13 @@ export default function ManageProductPage() {
               )}
 
               <p className="mt-4 text-xs leading-5 text-[#91877e]">
-                Finishes and images save independently when you add, reorder or
-                delete them.
+                Inventory, finishes and images save independently when you
+                adjust, add, reorder or delete them.
               </p>
             </div>
           </div>
         </aside>
-      </form>
+      </div>
     </main>
   );
 }
@@ -689,7 +739,9 @@ function FormSection({
 
           <p className="mt-2 text-lg font-medium">{title}</p>
 
-          <p className="mt-2 text-xs leading-5 text-[#817870]">{description}</p>
+          <p className="mt-2 text-xs leading-5 text-[#817870]">
+            {description}
+          </p>
         </div>
 
         <div className="space-y-5">{children}</div>
@@ -715,12 +767,15 @@ function Field({
     <div>
       <label htmlFor={htmlFor} className="mb-2 block text-sm font-medium">
         {label}
+
         {required && <span className="ml-1 text-[#8a4b43]">*</span>}
       </label>
 
       {children}
 
-      {hint && <p className="mt-2 text-xs leading-5 text-[#91877e]">{hint}</p>}
+      {hint && (
+        <p className="mt-2 text-xs leading-5 text-[#91877e]">{hint}</p>
+      )}
     </div>
   );
 }
